@@ -1,0 +1,15 @@
+crawler:
+    codal: soorat sood & ziad, jaryan vojooh naghd, tarazname
+    tsmc : saham
+    aud/usd -> Toman : price_dollar_rl, geram18
+    gdp: https://tradingeconomics.com/iran/gdp
+    trading_view: "uk oil" -> (specific for oil industries)
+    
+secondary data (differential):
+    per insdustry: weight by income of total
+
+
+
+
+    
+    
