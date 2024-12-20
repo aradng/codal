@@ -1,15 +1,17 @@
 from dagster import (
-    DynamicPartitionsDefinition,
     MultiPartitionsDefinition,
+    WeeklyPartitionsDefinition,
     StaticPartitionsDefinition,
 )
 
 
-company_partitions = DynamicPartitionsDefinition(name="companies")
+time_partition = WeeklyPartitionsDefinition(
+    name="timewindow", start_date="2011-03-21", end_offset=0
+)
 
 company_timeframe_partition = MultiPartitionsDefinition(
     {
-        "symbol": company_partitions,
+        "timewindow": time_partition,
         "timeframe": StaticPartitionsDefinition(["3", "6", "12"]),
     }
 )

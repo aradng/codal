@@ -1,8 +1,8 @@
 from dagster import define_asset_job
-from codal.dagster_assets.fetcher.partitions import (
+from codal.fetcher.partitions import (
     company_timeframe_partition,
 )
-from codal.dagster_assets.fetcher.assets import get_company_reports
+from codal.fetcher.assets import fetch_company_reports
 
 fetch_company_reports_job = define_asset_job(
     name="fetch_company_reports_job",
@@ -15,6 +15,6 @@ fetch_company_reports_job = define_asset_job(
             }
         }
     },
-    selection=[get_company_reports],
+    selection=[fetch_company_reports],
     partitions_def=company_timeframe_partition,
 )

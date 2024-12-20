@@ -80,11 +80,6 @@ class CompanyReportLetter(BaseModel):
             persian_to_english(v).replace("/", "-")
         ).togregorian()
 
-    # @field_validator("ExcelUrl", mode="before")
-    # @classmethod
-    # def add_domain_excel(cls, v: str) -> str:
-    #     return str(f"https://excel.codal.ir{v}")
-
     @field_validator("Url", mode="before")
     @classmethod
     def add_domain_report(cls, v: str) -> str:
@@ -118,3 +113,14 @@ class CompanyIn(BaseModel):
     company_state: int = Field(validation_alias="st")
     industry_group: int = Field(validation_alias="IG")
     report_type: int = Field(validation_alias="RT")
+
+
+class GDPIn(BaseModel):
+    country: str
+    year: int
+    gdp_growth: float
+    gdp_nominal: float
+    gdp_per_capita_nominal: float
+    gdp_ppp: float
+    gdp_per_capita_ppp: float
+    gdp_ppp_share: float

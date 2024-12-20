@@ -6,80 +6,57 @@ from dagster import (
     MaterializeResult,
     MetadataValue,
     MultiPartitionKey,
+    TimeWindow,
     asset,
-    op,
 )
 from itertools import chain
 from pydantic import BaseModel
 import requests
-from codal.dagster_assets.fetcher.resources import (
+from codal.fetcher.resources import (
+    APINinjaResource,
+    AlphaVantaAPIResource,
+    CodalAPIResource,
     FileStoreCompanyListing,
     FileStoreCompanyReport,
     FileStoreIndustryListing,
+    TgjuAPIResource,
 )
 from codal.fetcher.schemas import (
-    CompanyIn,
     CompanyReportLetter,
     CompanyReportOut,
     CompanyReportsIn,
-    IndustryGroupIn,
 )
 
-from codal.dagster_assets.fetcher.partitions import (
+from codal.fetcher.partitions import (
     company_timeframe_partition,
 )
 import pandas as pd
 
-from codal.dagster_assets.fetcher.utils import partition_name_sanitizer
-
 
 @asset(
-    automation_condition=AutomationCondition.on_cron("@daily"),
+    automation_condition=AutomationCondition.on_cron("@weekly"),
 )
 def get_industries(
     industries_file: FileStoreIndustryListing,
-):
-    response = requests.get(
-        "https://search.codal.ir/api/search/v1/IndustryGroup",
-        headers={
-            "User-Agent": "",
-        },
-    )
-
-    df = pd.DataFrame(
-        [
-            IndustryGroupIn.model_validate(industry).model_dump()
-            for industry in response.json()
-        ]
-    )
-    df.set_index("Id")
-    industries_file.write(df)
-    return df
+    codal_api: CodalAPIResource,
+) -> pd.DataFrame:
+    """
+    returns updated industry listings
+    """
+    return industries_file.write(codal_api.industries)
 
 
 @asset(
-    automation_condition=AutomationCondition.on_cron("@daily"),
+    automation_condition=AutomationCondition.on_cron("@weekly"),
 )
 def get_companies(
-    context: AssetExecutionContext,
     companies_file: FileStoreCompanyListing,
+    codal_api: CodalAPIResource,
 ) -> pd.DataFrame:
     """
-    updates company listings and returns new companies
+    returns updated company listings
     """
-    response: requests.Response = requests.get(
-        "https://search.codal.ir/api/search/v1/companies",
-        headers={
-            "User-Agent": "",
-        },
-    )
-
-    companies = pd.DataFrame(
-        [CompanyIn.model_validate(r).model_dump() for r in response.json()]
-    )
-    companies.set_index("symbol", inplace=True)
-    companies_file.write(companies)
-    return companies
+    return companies_file.write(codal_api.companies)
 
 
 def get_url(params: BaseModel) -> str:
@@ -88,7 +65,7 @@ def get_url(params: BaseModel) -> str:
     return urljoin(base_url, f"?{query_string}")
 
 
-def get_company_report_listings(
+def fetch_reports(
     context: AssetExecutionContext, params: CompanyReportOut
 ) -> list[CompanyReportLetter]:
     listings: list[CompanyReportsIn] = []
@@ -96,9 +73,6 @@ def get_company_report_listings(
     context.log.info(f"fetching with params {params.model_dump(exclude_none=True)}")
     while True:
         params.PageNumber = current_page
-        context.log.info(
-            f"fetching {params.Symbol} {params.Length} month time frame: page {params.PageNumber}"
-        )
         response = requests.get(
             "https://search.codal.ir/api/search/v2/q?",
             params=params.model_dump(exclude_none=True),
@@ -107,12 +81,10 @@ def get_company_report_listings(
             },
         )
         if response.status_code != 200:
-            context.log.error("failed!")
             response.raise_for_status()
         current_page += 1
         listings.append(CompanyReportsIn.model_validate(response.json()))
         if listings[-1].IsAttacker:
-            context.log.warning("rate limit reached please adjust workers or delay")
             raise Exception("Rate Limit Reached")
         if listings[-1].Page < current_page:
             break
@@ -143,6 +115,7 @@ def get_excel_report(context: AssetExecutionContext, url) -> bytes:
 def get_company_excels(
     context: AssetExecutionContext,
     reports: list[CompanyReportLetter],
+    timeframe: int,
     company_report: FileStoreCompanyReport,
 ) -> pd.DataFrame:
     """
@@ -152,18 +125,14 @@ def get_company_excels(
     files: list[Path] = []
     context.log.info(f"fetching {len(reports)} sheets")
     assert isinstance(context.partition_key, MultiPartitionKey)
-    # use sanitized names for better directory naming schemas
-    company_report._symbol = context.partition_key.keys_by_dimension["symbol"]
-    company_report._time_frame = int(
-        context.partition_key.keys_by_dimension["timeframe"]
-    )
+    company_report._time_frame = timeframe
     for report in reports:
         if not report.HasExcel or report.jdate is None:
             continue
+        company_report._symbol = report.Symbol.strip()
         company_report._year = report.jdate.year
         company_report._filename = f"{report.jdate.isoformat()}.xls"
         company_report.write(get_excel_report(context, report.ExcelUrl))
-        files.append(company_report.data_path)
 
     return pd.DataFrame(files)
 
@@ -171,7 +140,7 @@ def get_company_excels(
 @asset(
     partitions_def=company_timeframe_partition,
 )
-def get_company_reports(
+def fetch_company_reports(
     context: AssetExecutionContext,
     company_report: FileStoreCompanyReport,
 ) -> MaterializeResult:
@@ -179,27 +148,26 @@ def get_company_reports(
     returns list of new report for a specific symbol and timeframe since last
     """
     assert isinstance(context.partition_key, MultiPartitionKey)
-    symbol = partition_name_sanitizer(
-        context.partition_key.keys_by_dimension["symbol"], reverse=True
-    )
+    assert isinstance(context.partition_time_window, TimeWindow)
+    time_window = context.partition_time_window
     timeframe = int(context.partition_key.keys_by_dimension["timeframe"])
-    company_report._symbol = symbol
     company_report._time_frame = timeframe
     params = CompanyReportOut.model_validate(
         dict(
-            Symbol=symbol,
             Length=timeframe,
             Audited=timeframe >= 6,
             NotAudited=not (timeframe >= 6),
-            FromDate=company_report.last_checkpoint,
+            FromDate=time_window.start,
+            ToDate=time_window.end,
         )
     )
     files = get_company_excels(
         context,
-        get_company_report_listings(context, params=params),
+        fetch_reports(context, params=params),
+        timeframe,
         company_report,
     )
-    company_report.update_checkpoint
+    company_report.update_checkpoint(start=time_window.start, end=time_window.end)
     return MaterializeResult(
         metadata={
             "url": MetadataValue.url(get_url(params)),
@@ -207,3 +175,45 @@ def get_company_reports(
             "paths": MetadataValue.md(files.to_markdown()),
         }
     )
+
+
+@asset(
+    automation_condition=AutomationCondition.on_cron("@weekly"),
+)
+def fetch_gdp(
+    ninja_api: APINinjaResource,
+) -> pd.DataFrame:
+    """
+    historical gdp for iran
+    """
+    return ninja_api.fetch_gdp(country="iran")
+
+
+@asset(
+    automation_condition=AutomationCondition.on_cron("@weekly"),
+)
+def fetch_commodity(alpha_vantage_api: AlphaVantaAPIResource) -> pd.DataFrame:
+    """
+    historical prices for BRENT CRUDE OIL
+    """
+    return alpha_vantage_api.fetch_history(symbol="BRENT")
+
+
+@asset(
+    automation_condition=AutomationCondition.on_cron("@weekly"),
+)
+def fetch_usd(tgju_api: TgjuAPIResource) -> pd.DataFrame:
+    """
+    historical prices for USD/RIAL
+    """
+    return tgju_api.fetch_history(currency="price_dollar_rl")
+
+
+@asset(
+    automation_condition=AutomationCondition.on_cron("@weekly"),
+)
+def fetch_gold(tgju_api: TgjuAPIResource) -> pd.DataFrame:
+    """
+    historical prices for 18k Gold/RIAL
+    """
+    return tgju_api.fetch_history(currency="geram18")

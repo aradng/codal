@@ -1,5 +1,5 @@
 from dagster import DefaultScheduleStatus, ScheduleDefinition
-from codal.dagster_assets.fetcher.jobs import (
+from codal.fetcher.jobs import (
     fetch_company_reports_job,
 )
 
