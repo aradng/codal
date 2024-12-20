@@ -10,3 +10,32 @@ services:
     ports:
       - "27017:27017"
     restart: always
+
+  dagster-daemon:
+    build: .
+    working_dir: /apps
+    command: dagster-daemon run
+    env_file: .env
+    volumes:
+      - /dagster:/opt/dagster
+      - /tmp/io_manager_storage:/tmp/io_manager_storage
+      - ./dagster.yaml:/opt/dagster/dagster.yaml
+      - .:/apps
+    restart: on-failure
+
+  dagster-webserver:
+    build: .
+    working_dir: /apps
+    command: dagster-webserver -h 0.0.0.0 -p 3000
+    ports:
+      - "3000:3000"
+    env_file: .env
+    volumes:
+      - /dagster:/opt/dagster
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/io_manager_storage:/tmp/io_manager_storage
+      - ./dagster.yaml:/opt/dagster/dagster.yaml
+      - .:/apps
+    restart: on-failure
+    depends_on:
+      - dagster-daemon
