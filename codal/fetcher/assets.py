@@ -1,5 +1,9 @@
+from itertools import chain
 from pathlib import Path
 from urllib.parse import urlencode, urljoin
+
+import pandas as pd
+import requests
 from dagster import (
     AssetExecutionContext,
     AutomationCondition,
@@ -9,28 +13,26 @@ from dagster import (
     TimeWindow,
     asset,
 )
-from itertools import chain
 from pydantic import BaseModel
-import requests
+
+from codal.fetcher.partitions import company_timeframe_partition
 from codal.fetcher.resources import (
-    APINinjaResource,
     AlphaVantaAPIResource,
+    APINinjaResource,
     CodalAPIResource,
     FileStoreCompanyListing,
     FileStoreCompanyReport,
     FileStoreIndustryListing,
+    FileStoreTSETMCListing,
     TgjuAPIResource,
+    TSEMTMCAPIResource,
 )
 from codal.fetcher.schemas import (
     CompanyReportLetter,
     CompanyReportOut,
     CompanyReportsIn,
 )
-
-from codal.fetcher.partitions import (
-    company_timeframe_partition,
-)
-import pandas as pd
+from codal.fetcher.utils import sanitize_persian
 
 
 @asset(
@@ -70,7 +72,9 @@ def fetch_reports(
 ) -> list[CompanyReportLetter]:
     listings: list[CompanyReportsIn] = []
     current_page = 1
-    context.log.info(f"fetching with params {params.model_dump(exclude_none=True)}")
+    context.log.info(
+        "fetching with params " f"{params.model_dump(exclude_none=True)}"
+    )
     while True:
         params.PageNumber = current_page
         response = requests.get(
@@ -117,6 +121,7 @@ def get_company_excels(
     reports: list[CompanyReportLetter],
     timeframe: int,
     company_report: FileStoreCompanyReport,
+    whitelist_symbol: list[str],
 ) -> pd.DataFrame:
     """
     download codal reports for a specific symbol and timeframe
@@ -127,9 +132,13 @@ def get_company_excels(
     assert isinstance(context.partition_key, MultiPartitionKey)
     company_report._time_frame = timeframe
     for report in reports:
-        if not report.HasExcel or report.jdate is None:
+        if (
+            not report.HasExcel
+            or report.jdate is None
+            or report.Symbol not in whitelist_symbol
+        ):
             continue
-        company_report._symbol = report.Symbol.strip()
+        company_report._symbol = sanitize_persian(report.Symbol.strip())
         company_report._year = report.jdate.year
         company_report._filename = f"{report.jdate.isoformat()}.xls"
         company_report.write(get_excel_report(context, report.ExcelUrl))
@@ -142,6 +151,7 @@ def get_company_excels(
 )
 def fetch_company_reports(
     context: AssetExecutionContext,
+    fetch_tsemc_filtered_companies,
     company_report: FileStoreCompanyReport,
 ) -> MaterializeResult:
     """
@@ -166,8 +176,11 @@ def fetch_company_reports(
         fetch_reports(context, params=params),
         timeframe,
         company_report,
+        fetch_tsemc_filtered_companies.index.values,
     )
-    company_report.update_checkpoint(start=time_window.start, end=time_window.end)
+    company_report.update_checkpoint(
+        start=time_window.start, end=time_window.end
+    )
     return MaterializeResult(
         metadata={
             "url": MetadataValue.url(get_url(params)),
@@ -217,3 +230,47 @@ def fetch_gold(tgju_api: TgjuAPIResource) -> pd.DataFrame:
     historical prices for 18k Gold/RIAL
     """
     return tgju_api.fetch_history(currency="geram18")
+
+
+@asset(
+    automation_condition=AutomationCondition.on_cron("@weekly"),
+)
+async def fetch_tsemc_filtered_companies(
+    tsetmc_api: TSEMTMCAPIResource,
+    tsetmc_file: FileStoreTSETMCListing,
+    get_companies,
+    get_industries,
+) -> pd.DataFrame:
+    """
+    list of non deleted codal companies listed in tsetmc,
+    excluded in industry group blacklist
+    """
+    # for now its a mapping might search on industries
+    # if industry indexes change over time
+    excluded_insustries = {
+        2: "اوراق مشارکت و سپرده های بانکی",
+        56: "سرمایه گذاریها",
+        66: "بیمه وصندوق بازنشستگی به جزتامین اجتماعی",
+        67: "فعالیتهای کمکی به نهادهای مالی واسط",
+        61: "حمل و نقل آبی",
+    }
+    # filter symbols with excluded industry groups
+    symbols = get_companies[
+        ~get_companies["industry_group"].isin(excluded_insustries.keys())
+    ].index
+    return tsetmc_file.write(await tsetmc_api.process_symbols(symbols))
+
+
+@asset(
+    automation_condition=AutomationCondition.on_cron("@weekly"),
+)
+async def fetch_tsemc_stocks(
+    tsetmc_api: TSEMTMCAPIResource, fetch_tsemc_filtered_companies
+) -> pd.DataFrame:
+    """
+    fetch stock price history for filtered companies
+    """
+
+    df = await tsetmc_api.fetch_stocks(fetch_tsemc_filtered_companies)
+    df.to_csv("./data/tsetmc_stocks.csv")
+    return df

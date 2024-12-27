@@ -1,24 +1,23 @@
-from dagster import EnvVar, repository
-
-from dagster import Definitions, load_assets_from_modules
+from dagster import Definitions, EnvVar, load_assets_from_modules
 
 from codal.fetcher import assets
+from codal.fetcher.jobs import fetch_company_reports_job
 from codal.fetcher.resources import (
-    APINinjaResource,
     AlphaVantaAPIResource,
+    APINinjaResource,
     CodalAPIResource,
     FileStoreCompanyListing,
     FileStoreCompanyReport,
     FileStoreIndustryListing,
+    FileStoreTSETMCListing,
     TgjuAPIResource,
+    TSEMTMCAPIResource,
 )
+from codal.fetcher.schedules import fetch_codal_reports_schedule
 from codal.fetcher.sensors import (
     fetcher_sources_freshness_checks,
     fetcher_sources_freshness_sensor,
 )
-
-from codal.fetcher.jobs import fetch_company_reports_job
-from codal.fetcher.schedules import fetch_codal_reports_schedule
 
 fetcher_assets = load_assets_from_modules([assets], group_name="fetcher")
 
@@ -28,12 +27,14 @@ defs = Definitions(
         "industries_file": FileStoreIndustryListing(),
         "companies_file": FileStoreCompanyListing(),
         "company_report": FileStoreCompanyReport(),
+        "tsetmc_file": FileStoreTSETMCListing(),
         "codal_api": CodalAPIResource(),
         "tgju_api": TgjuAPIResource(),
         "ninja_api": APINinjaResource(API_KEY=EnvVar("NINJA_API_KEY")),
         "alpha_vantage_api": AlphaVantaAPIResource(
             API_KEY=EnvVar("ALPHA_VANTAGE_API_KEY")
         ),
+        "tsetmc_api": TSEMTMCAPIResource(RETRY_LIMIT=3, INITIAL_RETRY_DELAY=1),
     },
     asset_checks=[*fetcher_sources_freshness_checks],
     sensors=[

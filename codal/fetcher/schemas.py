@@ -1,5 +1,8 @@
 import re
-import time
+from datetime import date, datetime
+
+from jdatetime import date as jdate
+from jdatetime import datetime as jdatetime
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -8,14 +11,8 @@ from pydantic import (
     computed_field,
     field_validator,
 )
-from datetime import date, datetime
-from jdatetime import date as jdate
-from jdatetime import datetime as jdatetime
 
-
-def persian_to_english(input: str) -> str:
-    trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
-    return input.translate(trans)
+from codal.fetcher.utils import sanitize_persian
 
 
 class CompanyReportOut(BaseModel):
@@ -24,7 +21,7 @@ class CompanyReportOut(BaseModel):
     NotAudited: bool = True
     AuditorRef: int = -1
     Category: int = 1
-    Childs: bool = False
+    Childs: bool = False  # no
     CompanyState: int = -1
     CompanyType: int = -1
     Consolidatable: bool = True
@@ -77,7 +74,7 @@ class CompanyReportLetter(BaseModel):
     @classmethod
     def jalali_to_date(cls, v: str) -> datetime:
         return jdatetime.fromisoformat(
-            persian_to_english(v).replace("/", "-")
+            sanitize_persian(v).replace("/", "-")
         ).togregorian()
 
     @field_validator("Url", mode="before")
@@ -85,8 +82,8 @@ class CompanyReportLetter(BaseModel):
     def add_domain_report(cls, v: str) -> str:
         return str(f"https://search.codal.ir{v}")
 
-    @computed_field
-    @property  # type: ignore[misc]
+    @computed_field  # type: ignore[misc]
+    @property
     def jdate(self) -> jdate | None:
         if match := re.search(r"\d{4}/\d{2}/\d{2}", self.Title):
             return jdate.fromisoformat(match.group().replace("/", "-"))
@@ -124,3 +121,22 @@ class GDPIn(BaseModel):
     gdp_ppp: float
     gdp_per_capita_ppp: float
     gdp_ppp_share: float
+
+
+class TSETMCSymbolIn(BaseModel):
+    symbol: str = Field(validation_alias="lVal18AFC")
+    name: str = Field(validation_alias="lVal30")
+    instrument_code: str = Field(validation_alias="insCode")
+    market_title: str = Field(validation_alias="flowTitle")
+    market_type: int = Field(validation_alias="flow")
+    lastDate: int
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def deleted(self) -> bool:
+        # has last date means not deleted
+        return self.lastDate == 0
+
+
+class TSETMCSearchIn(BaseModel):
+    instrumentSearch: list[TSETMCSymbolIn]

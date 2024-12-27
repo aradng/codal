@@ -1,15 +1,35 @@
+import asyncio
+from datetime import datetime, timedelta
+from enum import StrEnum, auto
+from io import StringIO
 from pathlib import Path
 from typing import Literal
-from dagster import ConfigurableResource
+
+import aiohttp
 import pandas as pd
 import requests
-from codal.fetcher.schemas import CompanyIn, CompanyReportsIn, GDPIn, IndustryGroupIn
+from dagster import ConfigurableResource
+from jdatetime import date as jdate
 from pydantic import BaseModel, PrivateAttr
-from datetime import datetime
+
+from codal.fetcher.schemas import (
+    CompanyIn,
+    CompanyReportsIn,
+    GDPIn,
+    IndustryGroupIn,
+    TSETMCSearchIn,
+    TSETMCSymbolIn,
+)
+from codal.fetcher.utils import sanitize_persian
+
+
+class ResponseType(StrEnum):
+    json = auto()
+    text = auto()
 
 
 class FileStoreCompanyListing(ConfigurableResource):
-    _companies_filename: str = PrivateAttr(default="companies.csv")
+    _companies_filename: str = PrivateAttr(default="codal_companies.csv")
     _base_dir: Path = PrivateAttr(default=Path("./data"))
 
     @property
@@ -35,7 +55,7 @@ class FileStoreCompanyListing(ConfigurableResource):
 
 
 class FileStoreIndustryListing(ConfigurableResource):
-    _companies_filename: str = PrivateAttr(default="industries.csv")
+    _companies_filename: str = PrivateAttr(default="codal_industries.csv")
     _base_dir: Path = PrivateAttr(default=Path("./data"))
 
     @property
@@ -77,7 +97,12 @@ class FileStoreCompanyReport(ConfigurableResource):
 
     @property
     def data_path(self) -> Path:
-        return self.path / str(self._year) / str(self._time_frame) / self._filename
+        return (
+            self.path
+            / str(self._year)
+            / str(self._time_frame)
+            / self._filename
+        )
 
     @property
     def update_path(self):
@@ -112,7 +137,7 @@ class CodalAPIResource(ConfigurableResource):
     @params.setter
     def params(self, params: BaseModel | dict | None = None):
         if isinstance(params, BaseModel):
-            c = params.model_dump(exclude_none=True)
+            self._params = params.model_dump(exclude_none=True)
             return
         if isinstance(params, dict):
             self._params = params
@@ -145,7 +170,9 @@ class CodalAPIResource(ConfigurableResource):
         return pd.DataFrame(
             [
                 CompanyIn.model_validate(r).model_dump()
-                for r in self._get(f"{self._base_url}{self._company_path}").json()
+                for r in self._get(
+                    f"{self._base_url}{self._company_path}"
+                ).json()
             ]
         ).set_index("symbol")
 
@@ -184,7 +211,8 @@ class APINinjaResource(ConfigurableResource):
 class AlphaVantaAPIResource(ConfigurableResource):
     API_KEY: str
     _url: str = PrivateAttr(
-        default="https://www.alphavantage.co/query?function={symbol}&interval={interval}&apikey={apikey}"
+        default="https://www.alphavantage.co/query?function={symbol}"
+        "&interval={interval}&apikey={apikey}"
     )
 
     def _get(self, url: str, params: dict):
@@ -193,7 +221,9 @@ class AlphaVantaAPIResource(ConfigurableResource):
         return response.json()["data"]
 
     def fetch_history(
-        self, symbol: str, interval: Literal["monthly", "weekly", "daily"] = "monthly"
+        self,
+        symbol: str,
+        interval: Literal["monthly", "weekly", "daily"] = "monthly",
     ) -> pd.DataFrame:
         return pd.DataFrame(
             self._get(self._url, params=dict(symbol=symbol, interval=interval))
@@ -202,7 +232,8 @@ class AlphaVantaAPIResource(ConfigurableResource):
 
 class TgjuAPIResource(ConfigurableResource):
     _url: str = PrivateAttr(
-        default="https://api.tgju.org/v1/market/indicator/summary-table-data/{currency}"
+        default="https://api.tgju.org/v1/market/indicator"
+        "/summary-table-data/{currency}"
     )
 
     def _get(self, url: str):
@@ -222,3 +253,180 @@ class TgjuAPIResource(ConfigurableResource):
             }
             for row in self._get(self._url.format(currency=currency))
         ).set_index("date")
+
+
+class TSEMTMCAPIResource(ConfigurableResource):
+    _source_name: str = PrivateAttr(default="source_symbol")
+    _search_symbol_url: str = PrivateAttr(
+        default="https://cdn.tsetmc.com/api/Instrument"
+        "/GetInstrumentSearch/{symbol}"
+    )
+    _ohlcv_url: str = PrivateAttr(
+        default="https://cdn.tsetmc.com/api/ClosingPrice"
+        "/GetClosingPriceDailyListCSV/{instrument_code}/{symbol}"
+    )
+    RETRY_LIMIT: int = 3
+    INITIAL_RETRY_DELAY: int = 1  # Seconds
+
+    async def _fetch_with_retries(
+        self,
+        url: str,
+        session: aiohttp.ClientSession,
+        response_type: ResponseType = ResponseType.json,
+    ) -> dict | str:
+        """Fetch data with retries on failure."""
+        delay = self.INITIAL_RETRY_DELAY
+        for attempt in range(self.RETRY_LIMIT + 1):
+            try:
+                async with session.get(url) as response:
+                    response.raise_for_status()
+
+                    return await getattr(response, response_type)()
+            except (
+                aiohttp.ClientError,
+                aiohttp.ServerTimeoutError,
+                aiohttp.ClientResponseError,
+            ):
+                await asyncio.sleep(delay)
+                delay *= 2  # Exponential backoff
+        raise Exception(
+            "retries limit reached adjust RETRY_LIMIT/INITIAL_RETRY_DELAY"
+            " or check network settings"
+        )  # Exhausted retries, re-raise the exception
+
+    async def match_symbol(self, symbol: str, session: aiohttp.ClientSession):
+        """Fetches instrument data for a given symbol name"""
+        response_data = await self._fetch_with_retries(
+            self._search_symbol_url.format(symbol=symbol), session
+        )
+        assert isinstance(response_data, dict)
+        # last date in tsmec means symbol has been deleted
+        instruments = TSETMCSearchIn.model_validate(
+            response_data
+        ).instrumentSearch
+        matches = [
+            i
+            for i in instruments
+            if sanitize_persian(i.symbol.strip())
+            == sanitize_persian(symbol.strip())
+            and not i.deleted
+        ]
+        if len(matches) == 0:
+            return {self._source_name: symbol} | {
+                column: None
+                for column in list(TSETMCSymbolIn.model_fields.keys())
+            }
+        return {
+            self._source_name: symbol,
+        } | matches[0].model_dump()
+
+    async def fetch_symbols(self, symbols: list[str]) -> pd.DataFrame:
+        async with aiohttp.ClientSession() as session:
+            tasks = [
+                self.find_symbol(sanitize_persian(symbol.strip()), session)
+                for symbol in symbols
+            ]
+            return (
+                pd.DataFrame(await asyncio.gather(*tasks))
+                .dropna()
+                .set_index(self._source_name)
+            )
+
+    async def fetch_ohlcv(
+        self, instrument_code: str, symbol: str, session: aiohttp.ClientSession
+    ):
+        response_data = await self._fetch_with_retries(
+            self._ohlcv_url.format(
+                symbol=symbol, instrument_code=instrument_code
+            ),
+            response_type=ResponseType.text,
+            session=session,
+        )
+        assert isinstance(response_data, str)
+        df = pd.read_csv(StringIO(response_data))
+        df.rename(
+            columns={
+                "<TICKER>": "symbol",
+                "<DTYYYYMMDD>": "date",
+                "<OPEN>": "open",
+                "<HIGH>": "high",
+                "<LOW>": "low",
+                "<CLOSE>": "close",
+                "<VOL>": "volume",
+            },
+            inplace=True,
+        )
+        df = df.loc[
+            :, ["symbol", "open", "close", "high", "low", "volume", "date"]
+        ]
+        df.date = df.date.apply(lambda x: datetime.strptime(str(x), "%Y%m%d"))
+        df.set_index("date", inplace=True)
+        return df
+
+    async def fetch_stocks(self, df: pd.DataFrame) -> pd.DataFrame:
+        async with aiohttp.ClientSession() as session:
+            tasks = [
+                self.fetch_ohlcv(
+                    instrument_code=row.instrument_code,
+                    symbol=row.symbol,
+                    session=session,
+                )
+                for _, row in df.iterrows()
+            ]
+            df = (
+                pd.DataFrame(
+                    [
+                        pd.Series(
+                            sf["close"],
+                            index=sf.index,
+                            name=sf["symbol"].iloc[0],
+                        )
+                        for sf in await asyncio.gather(*tasks)
+                    ]
+                )
+                .T.sort_index(ascending=False)
+                .bfill()
+            )
+            df["jdate"] = (df.index.astype("int64") // 10**9).map(
+                lambda x: jdate.fromtimestamp(x)
+            )
+            df["jdate_next"] = df["jdate"].shift().bfill()
+            # just hold end of jmonth data
+            df["eom"] = df.apply(
+                lambda x: (
+                    (x["jdate"] + timedelta(days=1)).month != x["jdate"].month
+                )
+                or x["jdate"].month != x["jdate_next"].month,
+                axis=1,
+            )
+            return df[df["eom"]].drop(columns=["eom", "jdate_next"])
+
+
+class FileStoreTSETMCListing(ConfigurableResource):
+    _source_name: str = PrivateAttr(default="source_symbol")
+    _companies_filename: str = PrivateAttr(default="tsetmc_companies.csv")
+    _base_dir: Path = PrivateAttr(default=Path("./data"))
+
+    @property
+    def path(self):
+        return self._base_dir / self._companies_filename
+
+    def check_dir_exists(self):
+        if not self.path.exists():
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def write(self, df: pd.DataFrame) -> pd.DataFrame:
+        self.check_dir_exists()
+        df.to_csv(str(self.path), mode="w")
+        return df
+
+    def read(self):
+        self.check_dir_exists()
+        if not self.path.exists():
+            df = pd.DataFrame(
+                columns=list(CompanyIn.model_fields.keys())
+                + [self._source_name]
+            )
+            df.set_index(self._source_name)
+            self.write(df)
+        return pd.read_csv(self.path, index_col=self._source_name)
