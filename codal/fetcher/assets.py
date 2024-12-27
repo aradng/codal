@@ -73,8 +73,9 @@ def fetch_reports(
     listings: list[CompanyReportsIn] = []
     current_page = 1
     context.log.info(
-        "fetching with params " f"{params.model_dump(exclude_none=True)}"
+        f"fetching with params {params.model_dump(exclude_none=True)}"
     )
+    context.log.info(f"fetch url: {MetadataValue.url(get_url(params))}")
     while True:
         params.PageNumber = current_page
         response = requests.get(
@@ -105,14 +106,16 @@ def get_excel_report(context: AssetExecutionContext, url) -> bytes:
         headers={
             "User-Agent": "codal",
         },
-        timeout=10,
+        timeout=30,
     )
     if response.status_code == 200:
         assert isinstance(response.content, bytes)
         return response.content
 
     context.log.error(f"download failed for {url}")
-    response.raise_for_status()
+    # sometimes files are not found and return internal error
+    if response.status_code != 500:
+        response.raise_for_status()
     return b""
 
 
@@ -141,7 +144,9 @@ def get_company_excels(
         company_report._symbol = sanitize_persian(report.Symbol.strip())
         company_report._year = report.jdate.year
         company_report._filename = f"{report.jdate.isoformat()}.xls"
-        company_report.write(get_excel_report(context, report.ExcelUrl))
+        if file := get_excel_report(context, report.ExcelUrl):
+            company_report.write(file)
+            files.append(company_report.data_path)
 
     return pd.DataFrame(files)
 
@@ -155,7 +160,8 @@ def fetch_company_reports(
     company_report: FileStoreCompanyReport,
 ) -> MaterializeResult:
     """
-    returns list of new report for a specific symbol and timeframe since last
+    list of new report for a specific symbol and timeframe "
+    "since last partition [week]
     """
     assert isinstance(context.partition_key, MultiPartitionKey)
     assert isinstance(context.partition_time_window, TimeWindow)
@@ -258,7 +264,7 @@ async def fetch_tsemc_filtered_companies(
     symbols = get_companies[
         ~get_companies["industry_group"].isin(excluded_insustries.keys())
     ].index
-    return tsetmc_file.write(await tsetmc_api.process_symbols(symbols))
+    return tsetmc_file.write(await tsetmc_api.fetch_symbols(symbols))
 
 
 @asset(

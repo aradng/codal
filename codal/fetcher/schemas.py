@@ -86,7 +86,14 @@ class CompanyReportLetter(BaseModel):
     @property
     def jdate(self) -> jdate | None:
         if match := re.search(r"\d{4}/\d{2}/\d{2}", self.Title):
-            return jdate.fromisoformat(match.group().replace("/", "-"))
+            res = match.group().replace("/", "-")
+            try:
+                return jdate.fromisoformat(res)
+            except ValueError as e:
+                if str(e) == "day is out of range for month":
+                    year, month, day = map(int, res.split("-"))
+                    return jdate(year=year, month=month, day=day - 1)
+                raise ValueError(f"could not correct jdate range {res}")
         return None
 
 

@@ -115,7 +115,7 @@ class FileStoreCompanyReport(ConfigurableResource):
     def update_checkpoint(self, start: datetime, end: datetime):
         self.check_path_exists(self.update_path)
         with open(self.update_path, "a") as f:
-            f.write(f"{start}->{end}")
+            f.write(f"\n{start.date()}->{end.date()}")
 
     def write(self, file_content: bytes):
         self.check_path_exists(self.data_path)
@@ -323,7 +323,7 @@ class TSEMTMCAPIResource(ConfigurableResource):
     async def fetch_symbols(self, symbols: list[str]) -> pd.DataFrame:
         async with aiohttp.ClientSession() as session:
             tasks = [
-                self.find_symbol(sanitize_persian(symbol.strip()), session)
+                self.match_symbol(sanitize_persian(symbol.strip()), session)
                 for symbol in symbols
             ]
             return (
