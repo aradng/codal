@@ -153,6 +153,7 @@ def get_company_excels(
 
 @asset(
     partitions_def=company_timeframe_partition,
+    automation_condition=AutomationCondition.eager(),
 )
 def fetch_company_reports(
     context: AssetExecutionContext,

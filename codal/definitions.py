@@ -1,7 +1,6 @@
 from dagster import Definitions, EnvVar, load_assets_from_modules
 
 from codal.fetcher import assets
-from codal.fetcher.jobs import fetch_company_reports_job
 from codal.fetcher.resources import (
     AlphaVantaAPIResource,
     APINinjaResource,
@@ -13,7 +12,6 @@ from codal.fetcher.resources import (
     TgjuAPIResource,
     TSEMTMCAPIResource,
 )
-from codal.fetcher.schedules import fetch_codal_reports_schedule
 from codal.fetcher.sensors import (
     fetcher_sources_freshness_checks,
     fetcher_sources_freshness_sensor,
@@ -40,6 +38,4 @@ defs = Definitions(
     sensors=[
         fetcher_sources_freshness_sensor,
     ],
-    jobs=[fetch_company_reports_job],
-    schedules=[fetch_codal_reports_schedule],
 )
