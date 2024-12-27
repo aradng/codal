@@ -100,22 +100,31 @@ def get_excel_report(context: AssetExecutionContext, url) -> bytes:
     """
     download single excel from url returns bytes
     """
+    retry_count = 3
     context.log.info(f"fetching from {url}")
-    response = requests.get(
-        url,
-        headers={
-            "User-Agent": "codal",
-        },
-        timeout=30,
-    )
-    if response.status_code == 200:
-        assert isinstance(response.content, bytes)
-        return response.content
+    for i in range(retry_count):
+        try:
+            response = requests.get(
+                url,
+                headers={
+                    "User-Agent": "codal",
+                },
+                timeout=10,
+            )
+            if response.status_code == 200:
+                assert isinstance(response.content, bytes)
+                return response.content
 
+            # sometimes files are not found and return internal error
+            if response.status_code != 500:
+                response.raise_for_status()
+        except requests.ReadTimeout:
+            if i < retry_count - 1:
+                context.log.warning("retrying ...")
+                pass
+            # some files get bunged up comment line below for that partition
+            raise
     context.log.error(f"download failed for {url}")
-    # sometimes files are not found and return internal error
-    if response.status_code != 500:
-        response.raise_for_status()
     return b""
 
 
