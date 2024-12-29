@@ -7,9 +7,12 @@ import requests
 from dagster import (
     AssetExecutionContext,
     AutomationCondition,
+    Backoff,
+    Jitter,
     MaterializeResult,
     MetadataValue,
     MultiPartitionKey,
+    RetryPolicy,
     TimeWindow,
     asset,
 )
@@ -36,6 +39,12 @@ from codal.fetcher.utils import sanitize_persian
 
 
 @asset(
+    retry_policy=RetryPolicy(
+        max_retries=3,
+        delay=10,
+        backoff=Backoff.EXPONENTIAL,
+        jitter=Jitter.PLUS_MINUS,
+    ),
     automation_condition=AutomationCondition.on_cron("@weekly"),
 )
 def get_industries(
@@ -49,6 +58,12 @@ def get_industries(
 
 
 @asset(
+    retry_policy=RetryPolicy(
+        max_retries=3,
+        delay=10,
+        backoff=Backoff.EXPONENTIAL,
+        jitter=Jitter.PLUS_MINUS,
+    ),
     automation_condition=AutomationCondition.on_cron("@weekly"),
 )
 def get_companies(
@@ -122,8 +137,6 @@ def get_excel_report(context: AssetExecutionContext, url) -> bytes:
             if i < retry_count - 1:
                 context.log.warning("retrying ...")
                 pass
-            # some files get bunged up comment line below for that partition
-            raise
     context.log.error(f"download failed for {url}")
     return b""
 
@@ -139,7 +152,7 @@ def get_company_excels(
     download codal reports for a specific symbol and timeframe
     returns list of PosixPath for excels in current run
     """
-    files: list[Path] = []
+    files: list[dict[str, Path | bool]] = []
     context.log.info(f"fetching {len(reports)} sheets")
     assert isinstance(context.partition_key, MultiPartitionKey)
     company_report._time_frame = timeframe
@@ -155,23 +168,31 @@ def get_company_excels(
         company_report._filename = f"{report.jdate.isoformat()}.xls"
         if file := get_excel_report(context, report.ExcelUrl):
             company_report.write(file)
-            files.append(company_report.data_path)
+            files.append({"path": company_report.data_path, "error": False})
+        else:
+            files.append({"path": company_report.data_path, "error": True})
 
-    return pd.DataFrame(files)
+    return pd.DataFrame(files, columns=["path", "error"])
 
 
 @asset(
+    retry_policy=RetryPolicy(
+        max_retries=3,
+        delay=10,
+        backoff=Backoff.EXPONENTIAL,
+        jitter=Jitter.PLUS_MINUS,
+    ),
     partitions_def=company_timeframe_partition,
     automation_condition=AutomationCondition.eager(),
 )
 def fetch_company_reports(
     context: AssetExecutionContext,
-    fetch_tsemc_filtered_companies,
+    fetch_tsetmc_filtered_companies,
     company_report: FileStoreCompanyReport,
 ) -> MaterializeResult:
     """
-    list of new report for a specific symbol and timeframe "
-    "since last partition [week]
+    list of new report for a specific symbol and timeframe
+    since last partition [week]
     """
     assert isinstance(context.partition_key, MultiPartitionKey)
     assert isinstance(context.partition_time_window, TimeWindow)
@@ -192,7 +213,7 @@ def fetch_company_reports(
         fetch_reports(context, params=params),
         timeframe,
         company_report,
-        fetch_tsemc_filtered_companies.index.values,
+        fetch_tsetmc_filtered_companies.index.values,
     )
     company_report.update_checkpoint(
         start=time_window.start, end=time_window.end
@@ -200,13 +221,20 @@ def fetch_company_reports(
     return MaterializeResult(
         metadata={
             "url": MetadataValue.url(get_url(params)),
-            "num_records": MetadataValue.int(len(files)),
+            "records": MetadataValue.int(len(files)),
+            "errors": MetadataValue.int(len(files[files["error"]])),
             "paths": MetadataValue.md(files.to_markdown()),
         }
     )
 
 
 @asset(
+    retry_policy=RetryPolicy(
+        max_retries=3,
+        delay=10,
+        backoff=Backoff.EXPONENTIAL,
+        jitter=Jitter.PLUS_MINUS,
+    ),
     automation_condition=AutomationCondition.on_cron("@weekly"),
 )
 def fetch_gdp(
@@ -219,6 +247,12 @@ def fetch_gdp(
 
 
 @asset(
+    retry_policy=RetryPolicy(
+        max_retries=3,
+        delay=10,
+        backoff=Backoff.EXPONENTIAL,
+        jitter=Jitter.PLUS_MINUS,
+    ),
     automation_condition=AutomationCondition.on_cron("@weekly"),
 )
 def fetch_commodity(alpha_vantage_api: AlphaVantaAPIResource) -> pd.DataFrame:
@@ -229,6 +263,12 @@ def fetch_commodity(alpha_vantage_api: AlphaVantaAPIResource) -> pd.DataFrame:
 
 
 @asset(
+    retry_policy=RetryPolicy(
+        max_retries=3,
+        delay=10,
+        backoff=Backoff.EXPONENTIAL,
+        jitter=Jitter.PLUS_MINUS,
+    ),
     automation_condition=AutomationCondition.on_cron("@weekly"),
 )
 def fetch_usd(tgju_api: TgjuAPIResource) -> pd.DataFrame:
@@ -239,6 +279,12 @@ def fetch_usd(tgju_api: TgjuAPIResource) -> pd.DataFrame:
 
 
 @asset(
+    retry_policy=RetryPolicy(
+        max_retries=3,
+        delay=10,
+        backoff=Backoff.EXPONENTIAL,
+        jitter=Jitter.PLUS_MINUS,
+    ),
     automation_condition=AutomationCondition.on_cron("@weekly"),
 )
 def fetch_gold(tgju_api: TgjuAPIResource) -> pd.DataFrame:
@@ -249,9 +295,15 @@ def fetch_gold(tgju_api: TgjuAPIResource) -> pd.DataFrame:
 
 
 @asset(
-    automation_condition=AutomationCondition.on_cron("@weekly"),
+    retry_policy=RetryPolicy(
+        max_retries=3,
+        delay=10,
+        backoff=Backoff.EXPONENTIAL,
+        jitter=Jitter.PLUS_MINUS,
+    ),
+    automation_condition=AutomationCondition.eager(),
 )
-async def fetch_tsemc_filtered_companies(
+async def fetch_tsetmc_filtered_companies(
     tsetmc_api: TSEMTMCAPIResource,
     tsetmc_file: FileStoreTSETMCListing,
     get_companies,
@@ -278,15 +330,22 @@ async def fetch_tsemc_filtered_companies(
 
 
 @asset(
-    automation_condition=AutomationCondition.on_cron("@weekly"),
+    retry_policy=RetryPolicy(
+        max_retries=3,
+        delay=10,
+        backoff=Backoff.EXPONENTIAL,
+        jitter=Jitter.PLUS_MINUS,
+    ),
+    automation_condition=AutomationCondition.on_cron("@weekly")
+    | AutomationCondition.eager(),
 )
-async def fetch_tsemc_stocks(
-    tsetmc_api: TSEMTMCAPIResource, fetch_tsemc_filtered_companies
+async def fetch_tsetmc_stocks(
+    tsetmc_api: TSEMTMCAPIResource, fetch_tsetmc_filtered_companies
 ) -> pd.DataFrame:
     """
     fetch stock price history for filtered companies
     """
 
-    df = await tsetmc_api.fetch_stocks(fetch_tsemc_filtered_companies)
+    df = await tsetmc_api.fetch_stocks(fetch_tsetmc_filtered_companies)
     df.to_csv("./data/tsetmc_stocks.csv")
     return df

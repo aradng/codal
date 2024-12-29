@@ -276,6 +276,7 @@ class TSEMTMCAPIResource(ConfigurableResource):
     ) -> dict | str:
         """Fetch data with retries on failure."""
         delay = self.INITIAL_RETRY_DELAY
+        err = ""
         for attempt in range(self.RETRY_LIMIT + 1):
             try:
                 async with session.get(url) as response:
@@ -286,12 +287,13 @@ class TSEMTMCAPIResource(ConfigurableResource):
                 aiohttp.ClientError,
                 aiohttp.ServerTimeoutError,
                 aiohttp.ClientResponseError,
-            ):
+            ) as e:
+                err = str(e)
                 await asyncio.sleep(delay)
                 delay *= 2  # Exponential backoff
         raise Exception(
             "retries limit reached adjust RETRY_LIMIT/INITIAL_RETRY_DELAY"
-            " or check network settings"
+            f" or check network settings : {err}"
         )  # Exhausted retries, re-raise the exception
 
     async def match_symbol(self, symbol: str, session: aiohttp.ClientSession):
