@@ -1,5 +1,5 @@
 from itertools import chain
-from pathlib import Path
+from typing import Any
 from urllib.parse import urlencode, urljoin
 
 import pandas as pd
@@ -9,9 +9,9 @@ from dagster import (
     AutomationCondition,
     Backoff,
     Jitter,
-    MaterializeResult,
     MetadataValue,
     MultiPartitionKey,
+    Output,
     RetryPolicy,
     TimeWindow,
     asset,
@@ -23,10 +23,7 @@ from codal.fetcher.resources import (
     AlphaVantaAPIResource,
     APINinjaResource,
     CodalAPIResource,
-    FileStoreCompanyListing,
     FileStoreCompanyReport,
-    FileStoreIndustryListing,
-    FileStoreTSETMCListing,
     TgjuAPIResource,
     TSEMTMCAPIResource,
 )
@@ -46,15 +43,18 @@ from codal.fetcher.utils import sanitize_persian
         jitter=Jitter.PLUS_MINUS,
     ),
     automation_condition=AutomationCondition.on_cron("@weekly"),
+    io_manager_key="df",
+    metadata={"name": "codal_industries"},
 )
 def get_industries(
-    industries_file: FileStoreIndustryListing,
+    context: AssetExecutionContext,
     codal_api: CodalAPIResource,
-) -> pd.DataFrame:
+) -> Output[pd.DataFrame]:
     """
     returns updated industry listings
     """
-    return industries_file.write(codal_api.industries)
+    df = codal_api.industries
+    return Output(df, metadata={"records": len(df)})
 
 
 @asset(
@@ -65,15 +65,18 @@ def get_industries(
         jitter=Jitter.PLUS_MINUS,
     ),
     automation_condition=AutomationCondition.on_cron("@weekly"),
+    io_manager_key="df",
+    metadata={"name": "codal_companies"},
 )
 def get_companies(
-    companies_file: FileStoreCompanyListing,
+    context: AssetExecutionContext,
     codal_api: CodalAPIResource,
-) -> pd.DataFrame:
+) -> Output[pd.DataFrame]:
     """
     returns updated company listings
     """
-    return companies_file.write(codal_api.companies)
+    df = codal_api.companies
+    return Output(df, metadata={"records": len(df)})
 
 
 def get_url(params: BaseModel) -> str:
@@ -152,7 +155,7 @@ def get_company_excels(
     download codal reports for a specific symbol and timeframe
     returns list of PosixPath for excels in current run
     """
-    files: list[dict[str, Path | bool]] = []
+    files: list[dict[str, Any]] = []
     context.log.info(f"fetching {len(reports)} sheets")
     assert isinstance(context.partition_key, MultiPartitionKey)
     company_report._time_frame = timeframe
@@ -166,13 +169,24 @@ def get_company_excels(
         company_report._symbol = sanitize_persian(report.Symbol.strip())
         company_report._year = report.jdate.year
         company_report._filename = f"{report.jdate.isoformat()}.xls"
+        metadata = {
+            "symbol": company_report._symbol,
+            "year": company_report._year,
+            "timeframe": company_report._time_frame,
+            "name": company_report._filename,
+            "path": company_report.data_path,
+            "error": False,
+        }
         if file := get_excel_report(context, report.ExcelUrl):
             company_report.write(file)
-            files.append({"path": company_report.data_path, "error": False})
+            files.append(metadata)
         else:
-            files.append({"path": company_report.data_path, "error": True})
+            metadata["error"] = True
+            files.append(metadata)
 
-    return pd.DataFrame(files, columns=["path", "error"])
+    return pd.DataFrame(
+        files, columns=["symbol", "year", "timeframe", "name", "path", "error"]
+    )
 
 
 @asset(
@@ -189,7 +203,7 @@ def fetch_company_reports(
     context: AssetExecutionContext,
     fetch_tsetmc_filtered_companies,
     company_report: FileStoreCompanyReport,
-) -> MaterializeResult:
+) -> pd.DataFrame:
     """
     list of new report for a specific symbol and timeframe
     since last partition [week]
@@ -213,12 +227,12 @@ def fetch_company_reports(
         fetch_reports(context, params=params),
         timeframe,
         company_report,
-        fetch_tsetmc_filtered_companies.index.values,
+        fetch_tsetmc_filtered_companies["source_symbol"].values,
     )
     company_report.update_checkpoint(
         start=time_window.start, end=time_window.end
     )
-    return MaterializeResult(
+    context.add_output_metadata(
         metadata={
             "url": MetadataValue.url(get_url(params)),
             "records": MetadataValue.int(len(files)),
@@ -226,6 +240,7 @@ def fetch_company_reports(
             "paths": MetadataValue.md(files.to_markdown()),
         }
     )
+    return files
 
 
 @asset(
@@ -236,6 +251,8 @@ def fetch_company_reports(
         jitter=Jitter.PLUS_MINUS,
     ),
     automation_condition=AutomationCondition.on_cron("@weekly"),
+    io_manager_key="df",
+    metadata={"name": "gdp"},
 )
 def fetch_gdp(
     ninja_api: APINinjaResource,
@@ -254,6 +271,8 @@ def fetch_gdp(
         jitter=Jitter.PLUS_MINUS,
     ),
     automation_condition=AutomationCondition.on_cron("@weekly"),
+    io_manager_key="df",
+    metadata={"name": "oil"},
 )
 def fetch_commodity(alpha_vantage_api: AlphaVantaAPIResource) -> pd.DataFrame:
     """
@@ -270,6 +289,8 @@ def fetch_commodity(alpha_vantage_api: AlphaVantaAPIResource) -> pd.DataFrame:
         jitter=Jitter.PLUS_MINUS,
     ),
     automation_condition=AutomationCondition.on_cron("@weekly"),
+    io_manager_key="df",
+    metadata={"name": "codal_industries"},
 )
 def fetch_usd(tgju_api: TgjuAPIResource) -> pd.DataFrame:
     """
@@ -286,12 +307,21 @@ def fetch_usd(tgju_api: TgjuAPIResource) -> pd.DataFrame:
         jitter=Jitter.PLUS_MINUS,
     ),
     automation_condition=AutomationCondition.on_cron("@weekly"),
+    io_manager_key="df",
+    metadata={"name": "gold"},
 )
-def fetch_gold(tgju_api: TgjuAPIResource) -> pd.DataFrame:
+def fetch_gold(tgju_api: TgjuAPIResource) -> Output[pd.DataFrame]:
     """
     historical prices for 18k Gold/RIAL
     """
-    return tgju_api.fetch_history(currency="geram18")
+<<<<<<< HEAD
+    tgju_api.fetch_history(currency="geram18")
+=======
+    return Output(
+        tgju_api.fetch_history(currency="geram18"),
+        metadata={"name": "gold"},
+    )
+>>>>>>> 152360a (unify file resource to df)
 
 
 @asset(
@@ -302,10 +332,11 @@ def fetch_gold(tgju_api: TgjuAPIResource) -> pd.DataFrame:
         jitter=Jitter.PLUS_MINUS,
     ),
     automation_condition=AutomationCondition.eager(),
+    io_manager_key="df",
+    metadata={"name": "tsetmc_companies"},
 )
 async def fetch_tsetmc_filtered_companies(
     tsetmc_api: TSEMTMCAPIResource,
-    tsetmc_file: FileStoreTSETMCListing,
     get_companies,
     get_industries,
 ) -> pd.DataFrame:
@@ -317,6 +348,7 @@ async def fetch_tsetmc_filtered_companies(
     # if industry indexes change over time
     excluded_insustries = {
         2: "اوراق مشارکت و سپرده های بانکی",
+        46: "تجارت عمده فروشی به جز وسایل نقلیه موتور",
         56: "سرمایه گذاریها",
         66: "بیمه وصندوق بازنشستگی به جزتامین اجتماعی",
         67: "فعالیتهای کمکی به نهادهای مالی واسط",
@@ -325,8 +357,8 @@ async def fetch_tsetmc_filtered_companies(
     # filter symbols with excluded industry groups
     symbols = get_companies[
         ~get_companies["industry_group"].isin(excluded_insustries.keys())
-    ].index
-    return tsetmc_file.write(await tsetmc_api.fetch_symbols(symbols))
+    ]["symbol"]
+    return await tsetmc_api.fetch_symbols(symbols)
 
 
 @asset(
@@ -338,6 +370,8 @@ async def fetch_tsetmc_filtered_companies(
     ),
     automation_condition=AutomationCondition.on_cron("@weekly")
     | AutomationCondition.eager(),
+    io_manager_key="df",
+    metadata={"name": "tsetmc_stocks"},
 )
 async def fetch_tsetmc_stocks(
     tsetmc_api: TSEMTMCAPIResource, fetch_tsetmc_filtered_companies
@@ -346,6 +380,4 @@ async def fetch_tsetmc_stocks(
     fetch stock price history for filtered companies
     """
 
-    df = await tsetmc_api.fetch_stocks(fetch_tsetmc_filtered_companies)
-    df.to_csv("./data/tsetmc_stocks.csv")
-    return df
+    return await tsetmc_api.fetch_stocks(fetch_tsetmc_filtered_companies)
