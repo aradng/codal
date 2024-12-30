@@ -310,11 +310,18 @@ def fetch_usd(tgju_api: TgjuAPIResource) -> pd.DataFrame:
     io_manager_key="df",
     metadata={"name": "gold"},
 )
-def fetch_gold(tgju_api: TgjuAPIResource) -> pd.DataFrame:
+def fetch_gold(tgju_api: TgjuAPIResource) -> Output[pd.DataFrame]:
     """
     historical prices for 18k Gold/RIAL
     """
+<<<<<<< HEAD
     tgju_api.fetch_history(currency="geram18")
+=======
+    return Output(
+        tgju_api.fetch_history(currency="geram18"),
+        metadata={"name": "gold"},
+    )
+>>>>>>> 152360a (unify file resource to df)
 
 
 @asset(
