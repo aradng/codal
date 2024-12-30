@@ -8,7 +8,12 @@ from typing import Literal
 import aiohttp
 import pandas as pd
 import requests
-from dagster import ConfigurableResource
+from dagster import (
+    ConfigurableIOManager,
+    ConfigurableResource,
+    InputContext,
+    OutputContext,
+)
 from jdatetime import date as jdate
 from pydantic import BaseModel, PrivateAttr
 
@@ -26,58 +31,6 @@ from codal.fetcher.utils import sanitize_persian
 class ResponseType(StrEnum):
     json = auto()
     text = auto()
-
-
-class FileStoreCompanyListing(ConfigurableResource):
-    _companies_filename: str = PrivateAttr(default="codal_companies.csv")
-    _base_dir: Path = PrivateAttr(default=Path("./data"))
-
-    @property
-    def path(self):
-        return self._base_dir / self._companies_filename
-
-    def check_dir_exists(self):
-        if not self.path.exists():
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-
-    def write(self, df: pd.DataFrame):
-        self.check_dir_exists()
-        df.to_csv(str(self.path), mode="w")
-        return df
-
-    def read(self):
-        self.check_dir_exists()
-        if not self.path.exists():
-            df = pd.DataFrame(columns=list(CompanyIn.model_fields.keys()))
-            df.set_index("symbol")
-            self.write(df)
-        return pd.read_csv(self.path, index_col="symbol")
-
-
-class FileStoreIndustryListing(ConfigurableResource):
-    _companies_filename: str = PrivateAttr(default="codal_industries.csv")
-    _base_dir: Path = PrivateAttr(default=Path("./data"))
-
-    @property
-    def path(self):
-        return self._base_dir / self._companies_filename
-
-    def check_dir_exists(self):
-        if not self.path.exists():
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-
-    def write(self, df: pd.DataFrame):
-        self.check_dir_exists()
-        df.to_csv(str(self.path), mode="w")
-        return df
-
-    def read(self):
-        self.check_dir_exists()
-        if not self.path.exists():
-            df = pd.DataFrame(columns=list(CompanyIn.model_fields.keys()))
-            df.set_index("Id", inplace=True)
-            self.write(df)
-        return pd.read_csv(self.path, index_col="Id")
 
 
 class FileStoreCompanyReport(ConfigurableResource):
@@ -174,7 +127,7 @@ class CodalAPIResource(ConfigurableResource):
                     f"{self._base_url}{self._company_path}"
                 ).json()
             ]
-        ).set_index("symbol")
+        )
 
     @property
     def industries(self) -> pd.DataFrame:
@@ -185,7 +138,7 @@ class CodalAPIResource(ConfigurableResource):
                     f"{self._base_url}{self._industry_path}"
                 ).json()
             ]
-        ).set_index("Id")
+        )
 
 
 class APINinjaResource(ConfigurableResource):
@@ -205,7 +158,7 @@ class APINinjaResource(ConfigurableResource):
                 GDPIn.model_validate(gdp).model_dump()
                 for gdp in self._get(self._gdp_api.format(country=country))
             ]
-        ).set_index("year")
+        )
 
 
 class AlphaVantaAPIResource(ConfigurableResource):
@@ -227,7 +180,7 @@ class AlphaVantaAPIResource(ConfigurableResource):
     ) -> pd.DataFrame:
         return pd.DataFrame(
             self._get(self._url, params=dict(symbol=symbol, interval=interval))
-        ).set_index("date")
+        )
 
 
 class TgjuAPIResource(ConfigurableResource):
@@ -252,7 +205,7 @@ class TgjuAPIResource(ConfigurableResource):
                 "jdate": row[7],
             }
             for row in self._get(self._url.format(currency=currency))
-        ).set_index("date")
+        )
 
 
 class TSEMTMCAPIResource(ConfigurableResource):
@@ -328,11 +281,7 @@ class TSEMTMCAPIResource(ConfigurableResource):
                 self.match_symbol(sanitize_persian(symbol.strip()), session)
                 for symbol in symbols
             ]
-            return (
-                pd.DataFrame(await asyncio.gather(*tasks))
-                .dropna()
-                .set_index(self._source_name)
-            )
+            return pd.DataFrame(await asyncio.gather(*tasks)).dropna()
 
     async def fetch_ohlcv(
         self, instrument_code: str, symbol: str, session: aiohttp.ClientSession
@@ -358,12 +307,12 @@ class TSEMTMCAPIResource(ConfigurableResource):
             },
             inplace=True,
         )
-        df = df.loc[
-            :, ["symbol", "open", "close", "high", "low", "volume", "date"]
-        ]
-        df.date = df.date.apply(lambda x: datetime.strptime(str(x), "%Y%m%d"))
+        df = df.loc[:, ["open", "close", "high", "low", "volume", "date"]]
+        df["date"] = df["date"].apply(
+            lambda x: datetime.strptime(str(x), "%Y%m%d")
+        )
         df.set_index("date", inplace=True)
-        return df
+        return symbol, df
 
     async def fetch_stocks(self, df: pd.DataFrame) -> pd.DataFrame:
         async with aiohttp.ClientSession() as session:
@@ -381,17 +330,17 @@ class TSEMTMCAPIResource(ConfigurableResource):
                         pd.Series(
                             sf["close"],
                             index=sf.index,
-                            name=sf["symbol"].iloc[0],
+                            name=symbol,
                         )
-                        for sf in await asyncio.gather(*tasks)
+                        for symbol, sf in await asyncio.gather(*tasks)
                     ]
                 )
                 .T.sort_index(ascending=False)
                 .bfill()
             )
-            df["jdate"] = (df.index.astype("int64") // 10**9).map(
-                lambda x: jdate.fromtimestamp(x)
-            )
+            df["jdate"] = (
+                df.index.to_series().astype("int64") // 10**9
+            ).map(lambda x: jdate.fromtimestamp(x))
             df["jdate_next"] = df["jdate"].shift().bfill()
             # just hold end of jmonth data
             df["eom"] = df.apply(
@@ -404,31 +353,27 @@ class TSEMTMCAPIResource(ConfigurableResource):
             return df[df["eom"]].drop(columns=["eom", "jdate_next"])
 
 
-class FileStoreTSETMCListing(ConfigurableResource):
-    _source_name: str = PrivateAttr(default="source_symbol")
-    _companies_filename: str = PrivateAttr(default="tsetmc_companies.csv")
+class DataFrameIOManager(ConfigurableIOManager):
+    _filename: str = PrivateAttr()
     _base_dir: Path = PrivateAttr(default=Path("./data"))
 
     @property
     def path(self):
-        return self._base_dir / self._companies_filename
+        return self._base_dir / self._filename
 
     def check_dir_exists(self):
         if not self.path.exists():
             self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def write(self, df: pd.DataFrame) -> pd.DataFrame:
+    def handle_output(self, context: OutputContext, df: pd.DataFrame):
+        self._filename = context.metadata["name"] + ".csv"
         self.check_dir_exists()
-        df.to_csv(str(self.path), mode="w")
-        return df
+        df.to_csv(str(self.path), mode="w", index=False)
 
-    def read(self):
+    def load_input(self, context: InputContext):
+        self._filename = context.upstream_output.metadata["name"] + ".csv"
         self.check_dir_exists()
         if not self.path.exists():
-            df = pd.DataFrame(
-                columns=list(CompanyIn.model_fields.keys())
-                + [self._source_name]
-            )
-            df.set_index(self._source_name)
+            df = pd.DataFrame(columns=list)
             self.write(df)
-        return pd.read_csv(self.path, index_col=self._source_name)
+        return pd.read_csv(self.path)
