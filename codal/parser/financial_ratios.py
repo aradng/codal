@@ -1,5 +1,4 @@
-
-""" فعالیت """  # Activity
+"""فعالیت"""  # Activity
 
 
 # نسبت گردش دارایی
@@ -320,3 +319,34 @@ def calc_return_on_investment(gain, cost):
 # سود قبل از بهره، مالیات، استهلاک و آمورتیزاسیون (EBITDA)
 def calc_ebitda(ebit, depreciation, amortization):
     return ebit + depreciation + amortization
+
+
+"""قیمت"""  # Price
+
+
+def calc_revenue_to_GDP(revenue, gdp):
+    return revenue / gdp
+
+
+def calc_price_to_gold(stock_price, gold_price):
+    return stock_price / gold_price
+
+
+def calc_price_to_usd(stock_price, usd_price):
+    return stock_price / usd_price
+
+
+def calc_price_to_oil(stock_price, oil_price):
+    return stock_price / oil_price
+
+
+def calc_delta_price_to_delta_gold(delta_stock_price, delta_gold_price):
+    return delta_stock_price / delta_gold_price
+
+
+def calc_delta_price_to_delta_oil(delta_stock_price, delta_oil_price):
+    return delta_stock_price / delta_oil_price
+
+
+def calc_delta_price_to_delta_usd(delta_stock_price, delta_usd_price):
+    return delta_stock_price / delta_usd_price

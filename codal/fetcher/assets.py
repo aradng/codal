@@ -314,14 +314,10 @@ def fetch_gold(tgju_api: TgjuAPIResource) -> Output[pd.DataFrame]:
     """
     historical prices for 18k Gold/RIAL
     """
-<<<<<<< HEAD
-    tgju_api.fetch_history(currency="geram18")
-=======
     return Output(
         tgju_api.fetch_history(currency="geram18"),
         metadata={"name": "gold"},
     )
->>>>>>> 152360a (unify file resource to df)
 
 
 @asset(
@@ -381,3 +377,27 @@ async def fetch_tsetmc_stocks(
     """
 
     return await tsetmc_api.fetch_stocks(fetch_tsetmc_filtered_companies)
+
+
+@asset(
+    partitions_def=company_timeframe_partition,
+    io_manager_key="df",
+    metadata={"name": "ata_kek_file"},
+)
+async def ata_kek(fetch_company_reports, fetch_tsetmc_stocks):
+    from jdatetime import date as jdate
+
+    from codal.parser.mappings import calculations, table_names_map
+    from codal.parser.repository import extract_financial_data
+
+    for i in fetch_company_reports.itterrows():
+        with open(i["path"], "r+") as f:
+            a = f.ready()
+
+        yield extract_financial_data(
+            a,
+            table_names_map,
+            calculations,
+            jdate.fromisoformat(["name"].split(".")[0]),
+            i["symbol"],
+        )
