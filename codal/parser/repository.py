@@ -1,10 +1,18 @@
+import logging
 import unicodedata
+from datetime import timedelta
 
 import numpy as np
 import pandas as pd
 from bs4 import BeautifulSoup
 from fuzzywuzzy import process  # type: ignore[import-untyped]
+from jdatetime import date as JalaliDate
 from pandas.core.frame import DataFrame
+
+from codal.parser.schemas import PriceCollection
+from codal.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 def convert_to_float(value: str | float) -> float | None:
@@ -97,7 +105,7 @@ def safe_calc(func, args):
     return func(*args)
 
 
-def calculate_ratios(df: DataFrame, calculations: dict) -> DataFrame:
+def calc_financial_ratios(df: DataFrame, calculations: dict) -> DataFrame:
     ratios = {
         ratio_name: (
             safe_calc(func, [df["Value"].get(arg, np.nan) for arg in args])
@@ -112,6 +120,8 @@ def extract_financial_data(
     report_html_content: str,
     table_names_map: dict,
     calculations: dict,
+    jdate: JalaliDate,
+    symbol: str,
 ) -> DataFrame:
     values = pd.DataFrame()
     for name, row_names in table_names_map.items():
@@ -126,4 +136,128 @@ def extract_financial_data(
     values.loc["revenue_per_share"] = values.loc["revenue"] / (
         values.loc["capital"] / 1000
     )
-    return calculate_ratios(values, calculations)
+
+    price_collection = collect_prices(jdate, symbol)
+    values = pd.concat(
+        [
+            values,
+            pd.DataFrame(price_collection.model_dump(), index=["Value"]).T,
+        ]
+    )
+
+    return calc_financial_ratios(values, calculations)
+
+
+def get_price(
+    prices: DataFrame,
+    price_date: JalaliDate,
+    column: str,
+    date_format: str = "%Y/%m/%d",
+    max_lookup_attempts: int = 60,
+) -> float:
+    """
+    Generic function to retrieve stock, gold, oil, or USD prices.
+    """
+    price = prices.loc[
+        prices["jdate"] == price_date.strftime(format=date_format)
+    ][column]
+
+    if not price.empty:
+        return (
+            float(price.values[0].replace(",", ""))
+            if isinstance(price.values[0], str)
+            else price.values[0]
+        )
+
+    for i in range(1, max_lookup_attempts + 1):
+
+        # Check previous date (T - i)
+        prev_date = price_date - timedelta(i)
+        price = prices.loc[
+            prices["jdate"] == prev_date.strftime(format=date_format)
+        ][column]
+        if not price.empty:
+            return (
+                float(price.values[0].replace(",", ""))
+                if isinstance(price.values[0], str)
+                else price.values[0]
+            )
+
+        # Check next date (T + i)
+        next_date = price_date + timedelta(i)
+        price = prices.loc[
+            prices["jdate"] == next_date.strftime(format=date_format)
+        ][column]
+        if not price.empty:
+            return (
+                float(price.values[0].replace(",", ""))
+                if isinstance(price.values[0], str)
+                else price.values[0]
+            )
+
+    return np.nan
+
+
+def safe_price_extraction(
+    file_path: str,
+    jdate: JalaliDate,
+    column: str,
+    date_format: str = "%Y/%m/%d",
+) -> tuple[float, float]:
+    """
+    Reads a CSV file and retrieves the price for the given date and base year.
+    Returns (price, base_price) or (np.nan, np.nan) in case of errors.
+    """
+    try:
+        with open(file_path) as f:
+            prices = pd.read_csv(f)
+        price = get_price(
+            prices, jdate, column=column, date_format=date_format
+        )
+        base_price = get_price(
+            prices,
+            JalaliDate(settings.BASE_YEAR, 1, 1),
+            column=column,
+            date_format=date_format,
+        )
+        return price, base_price
+    except Exception as e:
+        logger.warning(f"Error fetching price from {file_path}: {e}")
+        return np.nan, np.nan
+
+
+def collect_prices(jdate: JalaliDate, symbol: str) -> PriceCollection:
+    stock_price, base_stock_price = safe_price_extraction(
+        settings.TSETMC_STOCKS_CSV_PATH, jdate, symbol, "%Y-%m-%d"
+    )
+    gold_price, base_gold_price = safe_price_extraction(
+        settings.GOLD_PRICE_CSV_PATH, jdate, "close"
+    )
+    oil_price, base_oil_price = safe_price_extraction(
+        settings.OIL_PRICE_CSV_PATH, jdate, "close"
+    )
+    usd_price, base_usd_price = safe_price_extraction(
+        settings.USD_PRICE_CSV_PATH, jdate, "close"
+    )
+
+    try:
+        with open(settings.GDP_CSV_PATH) as f:
+            gdps = pd.read_csv(f)
+        gdp = gdps.loc[
+            gdps["year"] == jdate.togregorian().year - 1, "gdp_ppp"
+        ].values[0]
+    except Exception as e:
+        logger.warning(f"GDP error: {e}")
+        gdp = np.nan
+
+    return PriceCollection(
+        GDP=gdp,
+        price_per_share=stock_price,
+        gold_price=gold_price,
+        oil_price=oil_price,
+        usd_price=usd_price,
+        delta_stock_price=stock_price - base_stock_price,
+        delta_gold_price=gold_price - base_gold_price,
+        delta_oil_price=oil_price - base_oil_price,
+        delta_usd_price=usd_price - base_usd_price,
+    )

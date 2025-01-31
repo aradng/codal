@@ -389,6 +389,19 @@ async def fetch_tsetmc_stocks(
     metadata={"name": "ata_kek_file"},
 )
 async def ata_kek(fetch_company_reports, fetch_tsetmc_stocks):
-    print(fetch_company_reports, fetch_tsetmc_stocks)
+    from jdatetime import date as jdate
 
-    return pd.DataFrame([1, 2, 3])
+    from codal.parser.mappings import calculations, table_names_map
+    from codal.parser.repository import extract_financial_data
+
+    for i in fetch_company_reports.itterrows():
+        with open(i["path"], "r+") as f:
+            a = f.ready()
+
+        yield extract_financial_data(
+            a,
+            table_names_map,
+            calculations,
+            jdate.fromisoformat(["name"].split(".")[0]),
+            i["symbol"],
+        )

@@ -23,6 +23,13 @@ from codal.parser.financial_ratios import (
     calc_quick_ratio,
     calc_return_on_assets,
     calc_return_on_equity,
+    calc_revenue_to_GDP,
+    calc_price_to_gold,
+    calc_price_to_oil,
+    calc_price_to_usd,
+    calc_delta_price_to_delta_gold,
+    calc_delta_price_to_delta_oil,
+    calc_delta_price_to_delta_usd,
     calc_total_debt_to_equity_ratio,
 )
 
@@ -149,5 +156,33 @@ calculations: dict[str, tuple[Callable, list[str]]] = {
     "current_cash_coverage": (
         calc_current_cash_coverage,
         ["operating_cash_flow", "current_liabilities"],
+    ),
+    "revenue_to_GDP": (
+        calc_revenue_to_GDP,
+        ["revenue", "GDP"],
+    ),
+    "price_to_gold": (
+        calc_price_to_gold,
+        ["price_per_share", "gold_price"],
+    ),
+    "price_to_oil": (
+        calc_price_to_oil,
+        ["price_per_share", "oil_price"],
+    ),
+    "price_to_usd": (
+        calc_price_to_usd,
+        ["price_per_share", "usd_price"],
+    ),
+    "delta_price_to_delta_gold": (
+        calc_delta_price_to_delta_gold,
+        ["delta_stock_price", "delta_gold_price"],
+    ),
+    "delta_price_to_delta_oil": (
+        calc_delta_price_to_delta_oil,
+        ["delta_stock_price", "delta_oil_price"],
+    ),
+    "delta_price_to_delta_usd": (
+        calc_delta_price_to_delta_usd,
+        ["delta_stock_price", "delta_usd_price"],
     ),
 }
