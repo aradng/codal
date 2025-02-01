@@ -374,3 +374,14 @@ async def fetch_tsetmc_stocks(
     """
 
     return await tsetmc_api.fetch_stocks(fetch_tsetmc_filtered_companies)
+
+
+@asset(
+    partitions_def=company_timeframe_partition,
+    io_manager_key="df",
+    metadata={"name": "ata_kek_file"},
+)
+async def ata_kek(fetch_company_reports, fetch_tsetmc_stocks):
+    print(fetch_company_reports, fetch_tsetmc_stocks)
+
+    return pd.DataFrame([1, 2, 3])
