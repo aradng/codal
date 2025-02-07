@@ -1,5 +1,5 @@
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from jdatetime import date as jdate
 from jdatetime import datetime as jdatetime
@@ -120,6 +120,7 @@ class CompanyIn(BaseModel):
 
 
 class GDPIn(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     country: str
     year: int
     gdp_growth: float
@@ -128,6 +129,13 @@ class GDPIn(BaseModel):
     gdp_ppp: float
     gdp_per_capita_ppp: float
     gdp_ppp_share: float
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def jdate(self) -> jdate:
+        return jdate.fromgregorian(
+            date=date(year=self.year + 1, month=1, day=1) - timedelta(days=1)
+        )
 
 
 class TSETMCSymbolIn(BaseModel):

@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from enum import StrEnum, auto
 from io import StringIO
 from pathlib import Path
@@ -178,9 +178,13 @@ class AlphaVantaAPIResource(ConfigurableResource):
         symbol: str,
         interval: Literal["monthly", "weekly", "daily"] = "monthly",
     ) -> pd.DataFrame:
-        return pd.DataFrame(
+        df = pd.DataFrame(
             self._get(self._url, params=dict(symbol=symbol, interval=interval))
         )
+        df["jdate"] = df["date"].apply(
+            lambda x: jdate.fromgregorian(date=date.fromisoformat(x))
+        )
+        return df
 
 
 class TgjuAPIResource(ConfigurableResource):
@@ -201,8 +205,8 @@ class TgjuAPIResource(ConfigurableResource):
                 "low": row[1],
                 "high": row[2],
                 "close": row[3],
-                "date": row[6],
-                "jdate": row[7],
+                "date": row[6].replace("/", "-"),
+                "jdate": row[7].replace("/", "-"),
             }
             for row in self._get(self._url.format(currency=currency))
         )
