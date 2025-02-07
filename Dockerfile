@@ -12,8 +12,8 @@ ENV TZ=UTC \
 RUN pip --retries 10 install --upgrade pip setuptools wheel
 RUN pip --retries 10 install poetry
 
-COPY pyproject.toml poetry.lock ./
-RUN poetry install --without dev
+COPY pyproject.toml poetry.lock README.md ./
+RUN poetry install --without dev --no-root --no-directory --compile
 
 RUN mkdir -p /opt/dagster
 ENV DAGSTER_HOME=/opt/dagster
