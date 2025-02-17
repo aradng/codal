@@ -8,6 +8,7 @@ from typing import Literal
 import aiohttp
 import pandas as pd
 import requests
+from bson.datetime_ms import DatetimeMS
 from dagster import (
     ConfigurableIOManager,
     ConfigurableResource,
@@ -15,7 +16,10 @@ from dagster import (
     OutputContext,
 )
 from jdatetime import date as jdate
+from jdatetime import datetime as jdatetime
 from pydantic import BaseModel, PrivateAttr
+from pymongo import AsyncMongoClient, MongoClient
+from pymongo.asynchronous.database import AsyncDatabase
 
 from codal.fetcher.schemas import (
     CompanyIn,
@@ -255,6 +259,8 @@ class TSEMTMCAPIResource(ConfigurableResource):
 
     async def match_symbol(self, symbol: str, session: aiohttp.ClientSession):
         """Fetches instrument data for a given symbol name"""
+        src_symbol = symbol
+        symbol = sanitize_persian(symbol.strip())
         response_data = await self._fetch_with_retries(
             self._search_symbol_url.format(symbol=symbol), session
         )
@@ -266,25 +272,20 @@ class TSEMTMCAPIResource(ConfigurableResource):
         matches = [
             i
             for i in instruments
-            if sanitize_persian(i.symbol.strip())
-            == sanitize_persian(symbol.strip())
-            and not i.deleted
+            if sanitize_persian(i.symbol.strip()) == symbol and not i.deleted
         ]
         if len(matches) == 0:
-            return {self._source_name: symbol} | {
+            return {self._source_name: src_symbol} | {
                 column: None
                 for column in list(TSETMCSymbolIn.model_fields.keys())
             }
         return {
-            self._source_name: symbol,
+            self._source_name: src_symbol,
         } | matches[0].model_dump()
 
     async def fetch_symbols(self, symbols: list[str]) -> pd.DataFrame:
         async with aiohttp.ClientSession() as session:
-            tasks = [
-                self.match_symbol(sanitize_persian(symbol.strip()), session)
-                for symbol in symbols
-            ]
+            tasks = [self.match_symbol(symbol, session) for symbol in symbols]
             return pd.DataFrame(await asyncio.gather(*tasks)).dropna()
 
     async def fetch_ohlcv(
@@ -375,9 +376,56 @@ class DataFrameIOManager(ConfigurableIOManager):
         df.to_csv(str(self.path), mode="w", index=False)
 
     def load_input(self, context: InputContext):
-        self._filename = context.upstream_output.metadata["name"] + ".csv"
+        self._filename = (
+            context.upstream_output.metadata.get("name")
+            or context.upstream_output.definition_metadata["name"]
+        ) + ".csv"
         self.check_dir_exists()
         if not self.path.exists():
             df = pd.DataFrame(columns=list)
             self.write(df)
         return pd.read_csv(self.path)
+
+
+class MongoIOManager(ConfigurableIOManager):
+    MONGO_USERNAME: str = "root"
+    MONGO_PASSWORD: str = "root"
+    MONGO_HOSTNAME: str = "localhost"
+    MONGO_PORT: str = "27017"
+    DB_NAME: str
+    _client: AsyncMongoClient = PrivateAttr()
+    _db: AsyncDatabase = PrivateAttr()
+    _inited: bool = PrivateAttr(False)
+
+    def init_db(self):
+        self._client = MongoClient(
+            f"mongodb://{self.MONGO_USERNAME}:{self.MONGO_PASSWORD}"
+            f"@{self.MONGO_HOSTNAME}:{self.MONGO_PORT}",
+            tz_aware=True,
+        )
+
+        self._db = self._client[self.DB_NAME]
+        self._inited = True
+
+    def jdate_to_date(self, x):
+        return DatetimeMS(
+            int((jdatetime.fromisoformat(x).timestamp() - 19603900800) * 1000)
+        )
+
+    def handle_output(self, context: OutputContext, df: pd.DataFrame):
+        if not self._inited:
+            self.init_db()
+        for col in df.columns:
+            try:
+                df[col] = pd.to_datetime(df[col])
+            except Exception:
+                pass
+        collection = self._db[context.metadata["collection"]]
+        collection.delete_many(
+            {"partition_key": context.partition_key}
+            if context.has_partition_key
+            else {}
+        )
+        collection.insert_many(list(df.T.to_dict().values()), ordered=False)
+
+    def load_input(self, context: InputContext): ...

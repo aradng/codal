@@ -47,13 +47,13 @@ from codal.fetcher.utils import sanitize_persian
     metadata={"name": "codal_industries"},
 )
 def get_industries(
-    context: AssetExecutionContext,
     codal_api: CodalAPIResource,
 ) -> Output[pd.DataFrame]:
     """
     returns updated industry listings
     """
     df = codal_api.industries
+    df.drop_duplicates("Id", keep="last", inplace=True)
     return Output(df, metadata={"records": len(df)})
 
 
@@ -69,7 +69,6 @@ def get_industries(
     metadata={"name": "codal_companies"},
 )
 def get_companies(
-    context: AssetExecutionContext,
     codal_api: CodalAPIResource,
 ) -> Output[pd.DataFrame]:
     """
@@ -85,15 +84,9 @@ def get_url(params: BaseModel) -> str:
     return urljoin(base_url, f"?{query_string}")
 
 
-def fetch_reports(
-    context: AssetExecutionContext, params: CompanyReportOut
-) -> list[CompanyReportLetter]:
+def fetch_reports(params: CompanyReportOut) -> list[CompanyReportLetter]:
     listings: list[CompanyReportsIn] = []
     current_page = 1
-    context.log.info(
-        f"fetching with params {params.model_dump(exclude_none=True)}"
-    )
-    context.log.info(f"fetch url: {MetadataValue.url(get_url(params))}")
     while True:
         params.PageNumber = current_page
         response = requests.get(
@@ -222,9 +215,13 @@ def fetch_company_reports(
             ToDate=time_window.end,
         )
     )
+    context.log.info(
+        f"fetching with params {params.model_dump(exclude_none=True)}"
+    )
+    context.log.info(f"fetch url: {MetadataValue.url(get_url(params))}")
     files = get_company_excels(
         context,
-        fetch_reports(context, params=params),
+        fetch_reports(params=params),
         timeframe,
         company_report,
         fetch_tsetmc_filtered_companies["source_symbol"].values,
@@ -290,7 +287,7 @@ def fetch_commodity(alpha_vantage_api: AlphaVantaAPIResource) -> pd.DataFrame:
     ),
     automation_condition=AutomationCondition.on_cron("@weekly"),
     io_manager_key="df",
-    metadata={"name": "codal_industries"},
+    metadata={"name": "usd"},
 )
 def fetch_usd(tgju_api: TgjuAPIResource) -> pd.DataFrame:
     """
@@ -351,10 +348,11 @@ async def fetch_tsetmc_filtered_companies(
         61: "حمل و نقل آبی",
     }
     # filter symbols with excluded industry groups
-    symbols = get_companies[
+    companies = get_companies[
         ~get_companies["industry_group"].isin(excluded_insustries.keys())
-    ]["symbol"]
-    return await tsetmc_api.fetch_symbols(symbols)
+    ]
+    df = await tsetmc_api.fetch_symbols(companies["symbol"])
+    return df
 
 
 @asset(
@@ -377,27 +375,3 @@ async def fetch_tsetmc_stocks(
     """
 
     return await tsetmc_api.fetch_stocks(fetch_tsetmc_filtered_companies)
-
-
-@asset(
-    partitions_def=company_timeframe_partition,
-    io_manager_key="df",
-    metadata={"name": "ata_kek_file"},
-)
-async def ata_kek(fetch_company_reports, fetch_tsetmc_stocks):
-    from jdatetime import date as jdate
-
-    from codal.parser.mappings import calculations, table_names_map
-    from codal.parser.repository import extract_financial_data
-
-    for i in fetch_company_reports.itterrows():
-        with open(i["path"], "r+") as f:
-            a = f.ready()
-
-        yield extract_financial_data(
-            a,
-            table_names_map,
-            calculations,
-            jdate.fromisoformat(["name"].split(".")[0]),
-            i["symbol"],
-        )
