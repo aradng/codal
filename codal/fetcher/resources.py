@@ -415,7 +415,7 @@ class MongoIOManager(ConfigurableIOManager):
     def handle_output(self, context: OutputContext, df: pd.DataFrame):
         if not self._inited:
             self.init_db()
-        for col in df.columns:
+        for col in filter(lambda x: "date" == x, df.columns):
             try:
                 df[col] = pd.to_datetime(df[col])
             except Exception:

@@ -7,7 +7,7 @@ from codal.fetcher.partitions import company_timeframe_partition
 @asset(
     automation_condition=AutomationCondition.eager(),
     io_manager_key="mongo",
-    metadata={"collection": "industries"},
+    metadata={"collection": "Industries"},
     ins={
         "get_industries": AssetIn(key="get_industries", input_manager_key="df")
     },
@@ -20,7 +20,7 @@ def industries(get_industries: pd.DataFrame) -> Output[pd.DataFrame]:
 @asset(
     automation_condition=AutomationCondition.eager(),
     io_manager_key="mongo",
-    metadata={"collection": "companies"},
+    metadata={"collection": "Companies"},
     ins={
         "get_companies": AssetIn(key="get_companies", input_manager_key="df"),
         "get_industries": AssetIn(
@@ -88,7 +88,7 @@ async def ata_kek(
 
     logger = logging.getLogger(__name__)  # Get logger instance
 
-    ans = []
+    answer = []
     try:
         logger.info(
             f"Processing {len(fetch_company_reports)} company reports."
@@ -114,9 +114,9 @@ async def ata_kek(
                 extracted_data["symbol"] = i["symbol"]
                 extracted_data["jdate"] = i["name"].split(".")[0]
 
-                ans.append(extracted_data)
+                answer.append(extracted_data)
                 logger.info(f"Successfully processed {i['symbol']}")
-                logger.info(f"Ans Length: {len(ans)}")
+                logger.info(f"Answer Length: {len(answer)}")
 
             except Exception as e:
                 logger.error(
@@ -127,8 +127,8 @@ async def ata_kek(
         logger.critical(f"Unexpected error: {e}")
 
     # Concatenate results
-    if ans:
-        result_df = pd.concat(ans)
+    if answer:
+        result_df = pd.concat(answer)
         logger.info("Successfully concatenated all data.")
         return result_df
     else:
