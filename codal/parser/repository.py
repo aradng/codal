@@ -1,5 +1,6 @@
 import logging
 import unicodedata
+from typing import Any
 from datetime import timedelta
 
 import numpy as np
@@ -54,7 +55,7 @@ def find_table_index(report_html_content: str, table_name: str) -> int | None:
 
 
 def get_first_table_after_index(
-    report_html_content: str, index: int
+    report_html_content: str, index: int, before98: bool = False
 ) -> pd.DataFrame:
     """
     Retrieves the first table in the HTML content that follows
@@ -66,31 +67,65 @@ def get_first_table_after_index(
 
     target_h3 = th3[index]
 
-    next_table = target_h3.find_next("table")
+    if before98:
+        table_holder = target_h3.find_next("div", class_="table_holder")
+        tables = table_holder.find_all("table")
+        if len(tables) >= 2:
+            next_table = tables[1]
+        else:
+            next_table = tables[0]
+    else:
+        next_table = target_h3.find_next("table")
     if not next_table:
         raise ValueError("No table found after the specified <h3> tag.")
 
     return pd.read_html(str(next_table))[0]
 
 
+def find_row_for_variable(
+    table: DataFrame,
+    values: dict[str, Any],
+    col: int,
+    row_name: str,
+    var_name: str,
+):
+    try:
+        table_row_names = table.iloc[:, col].astype(str).tolist()
+    except IndexError:
+        return
+    matched, score = process.extractOne(row_name, table_row_names)
+
+    if values.get(var_name) is None:
+        if score >= 95:
+            idx = table.iloc[:, col] == matched
+            matched_row: DataFrame = table[idx]
+            var = matched_row.iloc[0, col + 1]
+            if pd.isna(var):
+                table.drop(index=matched_row.index[0], inplace=True)
+                find_row_for_variable(table, values, col, row_name, var_name)
+            else:
+                values[var_name] = (
+                    convert_to_float(var) if not matched_row.empty else None
+                )
+        else:
+            values[var_name] = None
+
+
 def extract_variables(table: DataFrame, row_names_map: dict) -> DataFrame:
     values = {}
+    table.rename(
+        columns={
+            x: y for x, y in zip(table.columns, range(0, len(table.columns)))
+        },
+        inplace=True,
+    )
     try:
         for row_name, var_name in row_names_map.items():
             try:
-                table_row_names = table.iloc[:, 0].astype(str).tolist()
-                matched, score = process.extractOne(row_name, table_row_names)
-
-                if score >= 95:
-                    matched_row = table[table.iloc[:, 0] == matched]
-
-                    values[var_name] = (
-                        convert_to_float(matched_row.iloc[0, 1])
-                        if not matched_row.empty
-                        else None
+                for col in [0, 4]:
+                    find_row_for_variable(
+                        table, values, col, row_name, var_name
                     )
-                else:
-                    values[var_name] = None
             except Exception as e:
                 print(f"Error processing row '{row_name}': {e}")
     except Exception as e:
@@ -127,7 +162,9 @@ def extract_financial_data(
     for name, row_names in table_names_map.items():
         idx = find_table_index(report_html_content, name)
         if idx is not None:
-            table = get_first_table_after_index(report_html_content, idx)
+            table = get_first_table_after_index(
+                report_html_content, idx, jdate.year <= 1398
+            )
             extracted_variables = extract_variables(table, row_names)
             values = pd.concat(
                 [values, extracted_variables], ignore_index=False

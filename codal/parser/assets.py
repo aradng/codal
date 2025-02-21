@@ -76,7 +76,11 @@ async def ata_kek(
 
     from jdatetime import date as jdate
 
-    from codal.parser.mappings import calculations, table_names_map
+    from codal.parser.mappings import (
+        calculations,
+        table_names_map,
+        table_names_map_b98,
+    )
     from codal.parser.repository import extract_financial_data
 
     # Configure Logger
@@ -103,12 +107,18 @@ async def ata_kek(
                     f"Processing report: {i['path']} for {i['symbol']}"
                 )
 
+                jdate = jdate.fromisoformat(i["name"].split(".")[0])
+
                 # Extract financial data
                 extracted_data = extract_financial_data(
                     file_content,
-                    table_names_map,
+                    (
+                        table_names_map_b98
+                        if jdate.year <= 1398
+                        else table_names_map
+                    ),
                     calculations,
-                    jdate.fromisoformat(i["name"].split(".")[0]),
+                    jdate,
                     i["symbol"],
                 )
                 extracted_data["symbol"] = i["symbol"]
