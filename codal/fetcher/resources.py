@@ -1,4 +1,7 @@
 import asyncio
+import json
+import pickle
+import re
 from datetime import date, datetime, timedelta
 from enum import StrEnum, auto
 from io import StringIO
@@ -6,8 +9,10 @@ from pathlib import Path
 from typing import Literal
 
 import aiohttp
+import numpy as np
 import pandas as pd
 import requests
+from bs4 import BeautifulSoup
 from bson.datetime_ms import DatetimeMS
 from dagster import (
     ConfigurableIOManager,
@@ -40,44 +45,30 @@ class ResponseType(StrEnum):
 class FileStoreCompanyReport(ConfigurableResource):
     _base_dir: Path = PrivateAttr(default=Path("./data/companies"))
     _symbol: str = PrivateAttr()
-    _year: int = PrivateAttr()
     _time_frame: int = PrivateAttr()
     _filename: str = PrivateAttr()
 
     @property
-    def update_filename(self) -> str:
-        return f"updated_at_{self._time_frame}.txt"
-
-    @property
     def path(self) -> Path:
-        return self._base_dir / self._symbol
-
-    @property
-    def data_path(self) -> Path:
         return (
-            self.path
-            / str(self._year)
+            self._base_dir
+            / self._symbol
             / str(self._time_frame)
             / self._filename
         )
-
-    @property
-    def update_path(self):
-        return self._base_dir / self.update_filename
 
     def check_path_exists(self, path: Path):
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
 
-    def update_checkpoint(self, start: datetime, end: datetime):
-        self.check_path_exists(self.update_path)
-        with open(self.update_path, "a") as f:
-            f.write(f"\n{start.date()}->{end.date()}")
+    def write(self, ddf: dict[str, pd.DataFrame]):
+        self.check_path_exists(self.path)
+        with open(str(self.path), "wb") as f:
+            pickle.dump(ddf, f)
 
-    def write(self, file_content: bytes):
-        self.check_path_exists(self.data_path)
-        with open(str(self.data_path), "wb") as f:
-            f.write(file_content)
+    def read(self):
+        with open(str(self.path), "rb") as f:
+            return pickle.load(f)
 
 
 class CodalAPIResource(ConfigurableResource):
@@ -143,6 +134,116 @@ class CodalAPIResource(ConfigurableResource):
                 ).json()
             ]
         )
+
+
+class CodalReportResource(ConfigurableResource):
+    _viewstates = PrivateAttr(
+        default={
+            "__VIEWSTATE": None,
+            "__VIEWSTATEGENERATOR": None,
+            "__VIEWSTATEENCRYPTED": None,
+            "__EVENTVALIDATION": None,
+        }
+    )
+    _sheets: dict[str, dict] = PrivateAttr(default_factory=dict)
+    _tables: dict[str, pd.DataFrame] = PrivateAttr(default_factory=dict)
+    _url: str = PrivateAttr()
+    table_names: list[str] = [
+        "ترازنامه",
+        "جریان وجوه نقد",
+        "صورت جریان های نقدی",
+        "صورت سود و زیان",
+        "صورت وضعیت مالی",
+    ]
+
+    @property
+    def url(self) -> str:
+        return self._url
+
+    @url.setter
+    def url(self, url: str):
+        self._url = url
+
+    @property
+    def sheets(self):
+        return self._sheets
+
+    @property
+    def tables(self):
+        return self._tables
+
+    def fetch(self, table_id: str | None = None):
+        data = self._viewstates | {"ctl00$ddlTable": table_id}
+        if table_id:
+            self.response = requests.post(
+                self.url, data=data if table_id else None, timeout=10
+            )
+        else:
+            self.response = requests.get(self.url, timeout=10)
+        self.soup = BeautifulSoup(self.response.text, "html.parser")
+
+    def parse_sheet(self):
+        pattern = re.compile(
+            r"var datasource = (\{.*\});", re.MULTILINE | re.DOTALL
+        )
+        script = self.soup.find("script", string=pattern)
+        text = pattern.search(script.text).group(1)
+        data_in = json.loads(text)
+        sheet = data_in["sheets"][0]
+        title = sheet["title_Fa"]
+        # self.sheets[title] = sheet
+        table_idx = max(
+            [(i, len(j["cells"])) for i, j in enumerate(sheet["tables"])],
+            key=lambda x: x[1],
+        )[0]
+        df = pd.DataFrame(sheet["tables"][table_idx]["cells"])
+        df = (
+            df.pivot(index="rowCode", columns="columnCode", values="value")
+            .reset_index(drop=True)
+            .T.reset_index(drop=True)
+            .T
+        )
+        self._tables[title] = self.clean_df(df)
+
+    @staticmethod
+    def clean_df(df: pd.DataFrame):
+        all_columns = df.iloc[0]
+        sf = []
+        idx = all_columns[all_columns == "شرح"].index.tolist() + [
+            len(all_columns)
+        ]
+        columns = [
+            i.replace("\n", " ")
+            for i in df.iloc[0, range(idx[1] - idx[0])].tolist()
+        ]
+        for i, j in zip(idx[:-1], idx[1:]):
+            tmp = df[range(i, j)].reset_index(drop=True).iloc[1:]
+            tmp.columns = range(j - i)
+            sf.append(tmp)
+        kf: pd.DataFrame = pd.concat(sf, axis=0, ignore_index=True)
+        kf.columns = columns
+        kf.replace("", np.nan, inplace=True)
+        kf.dropna(how="all", inplace=True)
+        return kf
+
+    def set_viewstates(self):
+        for k in self._viewstates.keys():
+            self._viewstates[k] = self.soup.find("input", {"id": k})["value"]
+
+    def parse_table_ids(self):
+        selector = self.soup.find("select", {"id": "ctl00_ddlTable"})
+        return [
+            option["value"]
+            for option in selector.find_all("option")
+            if option.text in self.table_names
+        ]
+
+    def fetch_tables(self):
+        self.fetch()
+        self.set_viewstates()
+        for table_id in reversed(self.parse_table_ids()):
+            self.fetch(table_id)
+            self.set_viewstates()
 
 
 class APINinjaResource(ConfigurableResource):
@@ -426,6 +527,8 @@ class MongoIOManager(ConfigurableIOManager):
             if context.has_partition_key
             else {}
         )
+        if context.has_partition_key:
+            df["partition_key"] = context.partition_key
         collection.insert_many(list(df.T.to_dict().values()), ordered=False)
 
     def load_input(self, context: InputContext): ...

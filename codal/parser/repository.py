@@ -1,7 +1,7 @@
 import logging
 import unicodedata
-from typing import Any
 from datetime import timedelta
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -112,7 +112,7 @@ def find_row_for_variable(
 
 
 def extract_variables(table: DataFrame, row_names_map: dict) -> DataFrame:
-    values = {}
+    values: dict = {}
     table.rename(
         columns={
             x: y for x, y in zip(table.columns, range(0, len(table.columns)))

@@ -66,12 +66,23 @@ def companies(
 
 @asset(
     partitions_def=company_timeframe_partition,
-    io_manager_key="df",
-    metadata={"name": "ata_kek_file"},
+    io_manager_key="mongo",
+    metadata={"collection": "Profiles"},
+    ins={
+        "fetch_company_reports": AssetIn(
+            key="fetch_company_reports", input_manager_key="io_manager"
+        ),
+        "fetch_tsetmc_stocks": AssetIn(
+            key="fetch_tsetmc_stocks", input_manager_key="df"
+        ),
+        "get_companies": AssetIn(key="get_companies", input_manager_key="df"),
+    },
 )
 async def ata_kek(
-    fetch_company_reports: pd.DataFrame, fetch_tsetmc_stocks: pd.DataFrame
-):
+    fetch_company_reports: pd.DataFrame,
+    fetch_tsetmc_stocks: pd.DataFrame,
+    get_companies: pd.DataFrame,
+) -> Output[pd.DataFrame]:
     import logging
 
     from jdatetime import date as jdate
@@ -121,8 +132,18 @@ async def ata_kek(
                     jdate,
                     i["symbol"],
                 )
-                extracted_data["symbol"] = i["symbol"]
-                extracted_data["jdate"] = i["name"].split(".")[0]
+
+                extracted_data["name"] = i["symbol"]
+                extracted_data["is_industry"] = False
+                extracted_data["industry_group"] = get_companies.loc[
+                    get_companies["symbol"] == i["symbol"], "industry_group"
+                ].values[0]
+
+                extracted_data["timeframe"] = i["timeframe"]
+                extracted_data["year"] = i["year"]
+                jdate_value = jdate.fromisoformat(i["name"].split(".")[0])
+                extracted_data["jdate"] = jdate_value.isoformat()
+                extracted_data["date"] = jdate_value.togregorian()
 
                 answer.append(extracted_data)
                 logger.info(f"Successfully processed {i['symbol']}")
@@ -130,7 +151,8 @@ async def ata_kek(
 
             except Exception as e:
                 logger.error(
-                    f"Error processing {i['symbol']} at {i['path']}: {e}"
+                    f"Error processing {i['symbol']} at {i['path']}: {e}",
+                    exc_info=True,
                 )
 
     except Exception as e:
@@ -140,7 +162,7 @@ async def ata_kek(
     if answer:
         result_df = pd.concat(answer)
         logger.info("Successfully concatenated all data.")
-        return result_df
+        return Output(result_df, metadata={"records": len(result_df)})
     else:
         logger.warning("No data was processed successfully.")
-        return pd.DataFrame()
+        return Output(pd.DataFrame(), metadata={"records": 0})

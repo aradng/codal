@@ -5,6 +5,7 @@ from codal.fetcher.resources import (
     AlphaVantaAPIResource,
     APINinjaResource,
     CodalAPIResource,
+    CodalReportResource,
     DataFrameIOManager,
     FileStoreCompanyReport,
     MongoIOManager,
@@ -24,6 +25,7 @@ defs = Definitions(
     resources={
         "company_report": FileStoreCompanyReport(),
         "codal_api": CodalAPIResource(),
+        "codal_report_api": CodalReportResource(),
         "tgju_api": TgjuAPIResource(),
         "ninja_api": APINinjaResource(API_KEY=EnvVar("NINJA_API_KEY")),
         "alpha_vantage_api": AlphaVantaAPIResource(

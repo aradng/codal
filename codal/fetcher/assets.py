@@ -23,6 +23,7 @@ from codal.fetcher.resources import (
     AlphaVantaAPIResource,
     APINinjaResource,
     CodalAPIResource,
+    CodalReportResource,
     FileStoreCompanyReport,
     TgjuAPIResource,
     TSEMTMCAPIResource,
@@ -107,81 +108,6 @@ def fetch_reports(params: CompanyReportOut) -> list[CompanyReportLetter]:
     return list(chain.from_iterable([listing.Letters for listing in listings]))
 
 
-def get_excel_report(context: AssetExecutionContext, url) -> bytes:
-    """
-    download single excel from url returns bytes
-    """
-    retry_count = 3
-    context.log.info(f"fetching from {url}")
-    for i in range(retry_count):
-        try:
-            response = requests.get(
-                url,
-                headers={
-                    "User-Agent": "codal",
-                },
-                timeout=10,
-            )
-            if response.status_code == 200:
-                assert isinstance(response.content, bytes)
-                return response.content
-
-            # sometimes files are not found and return internal error
-            if response.status_code != 500:
-                response.raise_for_status()
-        except requests.ReadTimeout:
-            if i < retry_count - 1:
-                context.log.warning("retrying ...")
-                pass
-    context.log.error(f"download failed for {url}")
-    return b""
-
-
-def get_company_excels(
-    context: AssetExecutionContext,
-    reports: list[CompanyReportLetter],
-    timeframe: int,
-    company_report: FileStoreCompanyReport,
-    whitelist_symbol: list[str],
-) -> pd.DataFrame:
-    """
-    download codal reports for a specific symbol and timeframe
-    returns list of PosixPath for excels in current run
-    """
-    files: list[dict[str, Any]] = []
-    context.log.info(f"fetching {len(reports)} sheets")
-    assert isinstance(context.partition_key, MultiPartitionKey)
-    company_report._time_frame = timeframe
-    for report in reports:
-        if (
-            not report.HasExcel
-            or report.jdate is None
-            or report.Symbol not in whitelist_symbol
-        ):
-            continue
-        company_report._symbol = sanitize_persian(report.Symbol.strip())
-        company_report._year = report.jdate.year
-        company_report._filename = f"{report.jdate.isoformat()}.xls"
-        metadata = {
-            "symbol": company_report._symbol,
-            "year": company_report._year,
-            "timeframe": company_report._time_frame,
-            "name": company_report._filename,
-            "path": company_report.data_path,
-            "error": False,
-        }
-        if file := get_excel_report(context, report.ExcelUrl):
-            company_report.write(file)
-            files.append(metadata)
-        else:
-            metadata["error"] = True
-            files.append(metadata)
-
-    return pd.DataFrame(
-        files, columns=["symbol", "year", "timeframe", "name", "path", "error"]
-    )
-
-
 @asset(
     retry_policy=RetryPolicy(
         max_retries=3,
@@ -196,6 +122,7 @@ def fetch_company_reports(
     context: AssetExecutionContext,
     fetch_tsetmc_filtered_companies,
     company_report: FileStoreCompanyReport,
+    codal_report_api: CodalReportResource,
 ) -> pd.DataFrame:
     """
     list of new report for a specific symbol and timeframe
@@ -219,25 +146,45 @@ def fetch_company_reports(
         f"fetching with params {params.model_dump(exclude_none=True)}"
     )
     context.log.info(f"fetch url: {MetadataValue.url(get_url(params))}")
-    files = get_company_excels(
-        context,
-        fetch_reports(params=params),
-        timeframe,
-        company_report,
-        fetch_tsetmc_filtered_companies["source_symbol"].values,
+    files: list[dict[str, Any]] = []
+    for report in fetch_reports(params=params):
+        if (
+            report.jdate is None
+            or report.Symbol
+            not in fetch_tsetmc_filtered_companies["source_symbol"].values
+        ):
+            continue
+        company_report._symbol = sanitize_persian(report.Symbol.strip())
+        company_report._time_frame = timeframe
+        company_report._filename = report.jdate.isoformat()
+        file = {
+            "symbol": company_report._symbol,
+            "year": company_report._year,
+            "timeframe": company_report._time_frame,
+            "name": company_report._filename,
+            "path": company_report.data_path,
+            "error": False,
+        }
+        try:
+            codal_report_api.url = str(report.Url)
+            codal_report_api.fetch_tables()
+            company_report.write(codal_report_api.tables)
+        except Exception as e:
+            context.log.error(f"error fetching {report.Url}: {e}")
+            file["error"] = True
+        files.append(file)
+    data = pd.DataFrame(
+        files, columns=["symbol", "year", "timeframe", "name", "path", "error"]
     )
-    company_report.update_checkpoint(
-        start=time_window.start, end=time_window.end
-    )
-    context.add_output_metadata(
+    return Output(
+        data,
         metadata={
             "url": MetadataValue.url(get_url(params)),
-            "records": MetadataValue.int(len(files)),
-            "errors": MetadataValue.int(len(files[files["error"]])),
-            "paths": MetadataValue.md(files.to_markdown()),
-        }
+            "records": MetadataValue.int(len(data)),
+            "errors": MetadataValue.int(data["error"].sum()),
+            "paths": MetadataValue.md(data.to_markdown()),
+        },
     )
-    return files
 
 
 @asset(
