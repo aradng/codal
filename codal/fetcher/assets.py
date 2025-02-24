@@ -1,3 +1,4 @@
+import traceback
 from itertools import chain
 from typing import Any
 from urllib.parse import urlencode, urljoin
@@ -8,6 +9,7 @@ from dagster import (
     AssetExecutionContext,
     AutomationCondition,
     Backoff,
+    Failure,
     Jitter,
     MetadataValue,
     MultiPartitionKey,
@@ -33,7 +35,7 @@ from codal.fetcher.schemas import (
     CompanyReportOut,
     CompanyReportsIn,
 )
-from codal.fetcher.utils import sanitize_persian
+from codal.fetcher.utils import APIError, sanitize_persian
 
 
 @asset(
@@ -123,7 +125,7 @@ def fetch_company_reports(
     fetch_tsetmc_filtered_companies,
     company_report: FileStoreCompanyReport,
     codal_report_api: CodalReportResource,
-) -> pd.DataFrame:
+) -> Output[pd.DataFrame]:
     """
     list of new report for a specific symbol and timeframe
     since last partition [week]
@@ -158,20 +160,33 @@ def fetch_company_reports(
         company_report._time_frame = timeframe
         company_report._filename = report.jdate.isoformat()
         file = {
-            "symbol": company_report._symbol,
-            "year": company_report._year,
-            "timeframe": company_report._time_frame,
-            "name": company_report._filename,
-            "path": company_report.data_path,
+            "symbol": sanitize_persian(report.Symbol.strip()),
+            "year": report.jdate.year,
+            "timeframe": timeframe,
+            "name": report.jdate.isoformat(),
+            "path": company_report.path,
             "error": False,
         }
         try:
-            codal_report_api.url = str(report.Url)
-            codal_report_api.fetch_tables()
+            context.log.info(f"fetching {report.Url}")
+            codal_report_api.fetch_tables(str(report.Url))
             company_report.write(codal_report_api.tables)
+        except requests.exceptions.RequestException as e:
+            raise e
+        except APIError:
+            file["error"] = True
         except Exception as e:
             context.log.error(f"error fetching {report.Url}: {e}")
-            file["error"] = True
+            raise Failure(
+                description=f"error fetching {report.Url}: {e}",
+                metadata={
+                    "url": MetadataValue.url(str(report.Url)),
+                    "error": MetadataValue.text(str(e)),
+                    "trace": MetadataValue.text(str(traceback.format_exc())),
+                },
+                allow_retries=False,
+            )
+
         files.append(file)
     data = pd.DataFrame(
         files, columns=["symbol", "year", "timeframe", "name", "path", "error"]
@@ -181,7 +196,7 @@ def fetch_company_reports(
         metadata={
             "url": MetadataValue.url(get_url(params)),
             "records": MetadataValue.int(len(data)),
-            "errors": MetadataValue.int(data["error"].sum()),
+            "errors": MetadataValue.int(int(data["error"].sum())),
             "paths": MetadataValue.md(data.to_markdown()),
         },
     )

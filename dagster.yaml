@@ -3,5 +3,5 @@ run_coordinator:
   class: QueuedRunCoordinator
   config:
     dequeue_use_threads: true
-    dequeue_num_workers: 10
-    max_concurrent_runs: 10
+    dequeue_num_workers: 20
+    max_concurrent_runs: 20

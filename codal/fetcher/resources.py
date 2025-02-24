@@ -7,6 +7,7 @@ from enum import StrEnum, auto
 from io import StringIO
 from pathlib import Path
 from typing import Literal
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import aiohttp
 import numpy as np
@@ -19,6 +20,7 @@ from dagster import (
     ConfigurableResource,
     InputContext,
     OutputContext,
+    get_dagster_logger,
 )
 from jdatetime import date as jdate
 from jdatetime import datetime as jdatetime
@@ -34,7 +36,8 @@ from codal.fetcher.schemas import (
     TSETMCSearchIn,
     TSETMCSymbolIn,
 )
-from codal.fetcher.utils import sanitize_persian
+from codal.fetcher.utils import APIError, sanitize_persian
+from codal.utils import eval_formula, is_float
 
 
 class ResponseType(StrEnum):
@@ -137,73 +140,67 @@ class CodalAPIResource(ConfigurableResource):
 
 
 class CodalReportResource(ConfigurableResource):
-    _viewstates = PrivateAttr(
-        default={
-            "__VIEWSTATE": None,
-            "__VIEWSTATEGENERATOR": None,
-            "__VIEWSTATEENCRYPTED": None,
-            "__EVENTVALIDATION": None,
-        }
-    )
-    _sheets: dict[str, dict] = PrivateAttr(default_factory=dict)
     _tables: dict[str, pd.DataFrame] = PrivateAttr(default_factory=dict)
     _url: str = PrivateAttr()
-    table_names: list[str] = [
-        "ترازنامه",
-        "جریان وجوه نقد",
-        "صورت جریان های نقدی",
-        "صورت سود و زیان",
-        "صورت وضعیت مالی",
-    ]
-
-    @property
-    def url(self) -> str:
-        return self._url
-
-    @url.setter
-    def url(self, url: str):
-        self._url = url
-
-    @property
-    def sheets(self):
-        return self._sheets
 
     @property
     def tables(self):
         return self._tables
 
-    def fetch(self, table_id: str | None = None):
-        data = self._viewstates | {"ctl00$ddlTable": table_id}
-        if table_id:
-            self.response = requests.post(
-                self.url, data=data if table_id else None, timeout=10
+    def fetch(self, table_id: str = "") -> BeautifulSoup:
+        parsed_url = urlparse(self._url)
+        query = parse_qs(parsed_url.query)
+        query["sheetId"] = [table_id]
+        parsed_url = parsed_url._replace(query=urlencode(query, doseq=True))
+        response = requests.get(urlunparse(parsed_url), timeout=30)
+        if response.status_code != 200:
+            raise APIError(
+                f"Failed to fetch data from {self._url} "
+                f"for {table_id}: {response.status_code}",
+                status_code=response.status_code,
             )
-        else:
-            self.response = requests.get(self.url, timeout=10)
-        self.soup = BeautifulSoup(self.response.text, "html.parser")
+        return BeautifulSoup(response.text, "html.parser")
 
-    def parse_sheet(self):
+    def parse_sheet(self, soup: BeautifulSoup):
+        pd.set_option("future.no_silent_downcasting", True)
         pattern = re.compile(
             r"var datasource = (\{.*\});", re.MULTILINE | re.DOTALL
         )
-        script = self.soup.find("script", string=pattern)
-        text = pattern.search(script.text).group(1)
-        data_in = json.loads(text)
-        sheet = data_in["sheets"][0]
+        script_tag = soup.find("script", string=pattern)
+        script = pattern.search(script_tag.text)
+        assert isinstance(script, re.Match)
+        sheet = json.loads(script.group(1))["sheets"][0]
         title = sheet["title_Fa"]
-        # self.sheets[title] = sheet
         table_idx = max(
             [(i, len(j["cells"])) for i, j in enumerate(sheet["tables"])],
             key=lambda x: x[1],
         )[0]
         df = pd.DataFrame(sheet["tables"][table_idx]["cells"])
+        df.drop_duplicates(inplace=True)
+        df = self.calculate_formulas(df)
         df = (
-            df.pivot(index="rowCode", columns="columnCode", values="value")
+            df.pivot(
+                index="rowSequence", columns="columnSequence", values="value"
+            )
             .reset_index(drop=True)
             .T.reset_index(drop=True)
             .T
         )
-        self._tables[title] = self.clean_df(df)
+        self.tables[title] = self.clean_df(df)
+
+    @staticmethod
+    def calculate_formulas(df: pd.DataFrame):
+        values = {
+            i["address"]: float(i["value"])
+            for i in df.to_dict(orient="records")
+            if is_float(i["value"])
+        }
+        df.loc[df["formula"] != "", "value"] = df.loc[
+            df["formula"] != "", ["formula", "address"]
+        ].apply(
+            lambda x: eval_formula(x["formula"], x["address"], values), axis=1
+        )
+        return df
 
     @staticmethod
     def clean_df(df: pd.DataFrame):
@@ -226,24 +223,25 @@ class CodalReportResource(ConfigurableResource):
         kf.dropna(how="all", inplace=True)
         return kf
 
-    def set_viewstates(self):
-        for k in self._viewstates.keys():
-            self._viewstates[k] = self.soup.find("input", {"id": k})["value"]
-
-    def parse_table_ids(self):
-        selector = self.soup.find("select", {"id": "ctl00_ddlTable"})
+    def parse_table_ids(self, soup: BeautifulSoup) -> list[str]:
+        selector = soup.find(
+            "select", {"id": re.compile(r"ctl00[_$]ddlTable")}
+        )
         return [
             option["value"]
             for option in selector.find_all("option")
-            if option.text in self.table_names
+            if option["value"] in ["0", "1", "9"]
         ]
 
-    def fetch_tables(self):
-        self.fetch()
-        self.set_viewstates()
-        for table_id in reversed(self.parse_table_ids()):
-            self.fetch(table_id)
-            self.set_viewstates()
+    def fetch_tables(self, url: str):
+        logger = get_dagster_logger()
+        url = url.replace("Decision.aspx", "InterimStatement.aspx")
+        self._url = url
+        for table_id in self.parse_table_ids(self.fetch()):
+            try:
+                self.parse_sheet(self.fetch(table_id))
+            except APIError as e:
+                logger.warning(f"{type(e)}: {e}")
 
 
 class APINinjaResource(ConfigurableResource):
