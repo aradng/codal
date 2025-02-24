@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from beanie import Document, Link
+from beanie import Document
 
 
 class Industry(Document):
@@ -29,7 +29,7 @@ class Profile(Document):
     class Settings:
         name = "Profiles"
 
-    asset: Link[Company] | Link[Industry]
+    name: str
     is_industry: bool
     industry_group: int
 

@@ -80,7 +80,7 @@ class CompanyReportLetter(BaseModel):
     @field_validator("Url", mode="before")
     @classmethod
     def add_domain_report(cls, v: str) -> str:
-        return str(f"https://search.codal.ir{v}")
+        return str(f"https://codal.ir{v}")
 
     @computed_field  # type: ignore[misc]
     @property

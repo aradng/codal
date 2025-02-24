@@ -9,8 +9,6 @@ from pydantic import (
     model_validator,
 )
 
-from codal.models import Company, Industry
-
 
 class FilterError(Exception):
     status_code: int
@@ -106,7 +104,8 @@ class ProfileIn(PaginatedMixin):
 
 
 class ProfileOut(BaseModel):
-    asset: Company | Industry | None = None
+    name: str
+    industry_group: int
     is_industry: bool
 
     score: float

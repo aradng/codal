@@ -32,14 +32,12 @@ async def get_profile(asset_id: int) -> ProfileOutWithTotal:
 
 @router.get("/score")
 async def get_rankings(profile_in: ProfileIn):
-    query = Profile.find(
-        fetch_links=True
-    )  # test this for aggregate and chaining
+    query = Profile.find()
     if profile_in.industry_only:
         query = query.find(Eq(Profile.is_industry, True))
     if profile_in.industry_group:
         query = query.find(Profile.industry_group == profile_in.industry_group)
-    data_query = query.aggregate(
+    data = await query.aggregate(
         [
             {
                 "$addFields": {
@@ -59,7 +57,7 @@ async def get_rankings(profile_in: ProfileIn):
         ]
     ).to_list()
     return ProfileOutWithTotal(
-        data=await data_query,
+        data=data,
         page=profile_in.offset or 0,
         total=await query.count(),
     )
