@@ -10,6 +10,8 @@ services:
     ports:
       - "${MONGO_PORT:-27017}:27017"
     restart: always
+    networks:
+      - dagster
 
   dagster-daemon:
     build: .
@@ -17,11 +19,14 @@ services:
     command: dagster-daemon run
     env_file: .env
     volumes:
-      - /dagster:/opt/dagster
+      - /var/run/docker.sock:/var/run/docker.sock
       - /tmp/io_manager_storage:/tmp/io_manager_storage
+      - /dagster:/opt/dagster
       - ./dagster.yaml:/opt/dagster/dagster.yaml
       - .:/apps
     restart: always
+    networks:
+      - dagster
 
   dagster-webserver:
     build: .
@@ -32,10 +37,16 @@ services:
     env_file: .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /dagster:/opt/dagster
       - /tmp/io_manager_storage:/tmp/io_manager_storage
+      - /dagster:/opt/dagster
       - ./dagster.yaml:/opt/dagster/dagster.yaml
       - .:/apps
     restart: always
-    depends_on:
-      - dagster-daemon
+    networks:
+      - dagster
+
+
+networks:
+  dagster:
+    driver: bridge
+    name: dagster

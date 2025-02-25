@@ -3,5 +3,27 @@ run_coordinator:
   class: QueuedRunCoordinator
   config:
     dequeue_use_threads: true
-    dequeue_num_workers: 20
-    max_concurrent_runs: 20
+    dequeue_num_workers: 8
+    max_concurrent_runs: 10
+
+# run_monitoring:
+#   enabled: true
+#   max_runtime_seconds: 1800
+#   start_timeout_seconds: 180
+#   cancel_timeout_seconds: 180
+#   max_resume_run_attempts: 0
+#   poll_interval_seconds: 120
+
+sensors:
+  use_threads: true
+  num_workers: 8
+
+schedules:
+  use_threads: true
+  num_workers: 8
+
+telemetry:
+  enabled: false
+
+code_servers:
+  local_startup_timeout: 600

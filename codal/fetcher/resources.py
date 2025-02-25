@@ -4,6 +4,7 @@ import pickle
 import re
 from datetime import date, datetime, timedelta
 from enum import StrEnum, auto
+from functools import reduce
 from io import StringIO
 from pathlib import Path
 from typing import Literal
@@ -36,8 +37,12 @@ from codal.fetcher.schemas import (
     TSETMCSearchIn,
     TSETMCSymbolIn,
 )
-from codal.fetcher.utils import APIError, sanitize_persian
-from codal.utils import eval_formula, is_float
+from codal.fetcher.utils import (
+    APIError,
+    eval_formula,
+    is_float,
+    sanitize_persian,
+)
 
 
 class ResponseType(StrEnum):
@@ -46,31 +51,30 @@ class ResponseType(StrEnum):
 
 
 class FileStoreCompanyReport(ConfigurableResource):
-    _base_dir: Path = PrivateAttr(default=Path("./data/companies"))
-    _symbol: str = PrivateAttr()
-    _time_frame: int = PrivateAttr()
-    _filename: str = PrivateAttr()
+    BASE_DIR: str = "./data/companies"
 
-    @property
-    def path(self) -> Path:
-        return (
-            self._base_dir
-            / self._symbol
-            / str(self._time_frame)
-            / self._filename
-        )
+    def path(self, symbol: str, timeframe: int, name: str, **kwargs) -> Path:
+        return Path(self.BASE_DIR) / symbol / str(timeframe) / name
 
-    def check_path_exists(self, path: Path):
+    def _check_path_exists(self, path: Path):
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
 
-    def write(self, ddf: dict[str, pd.DataFrame]):
-        self.check_path_exists(self.path)
-        with open(str(self.path), "wb") as f:
+    def write(
+        self,
+        ddf: dict[str, pd.DataFrame],
+        symbol: str,
+        timeframe: int,
+        name: str,
+    ):
+        path = self.path(symbol, timeframe, name)
+        self._check_path_exists(path)
+        with open(str(path), "wb") as f:
             pickle.dump(ddf, f)
 
-    def read(self):
-        with open(str(self.path), "rb") as f:
+    def read(self, symbol: str, timeframe: int, name: str) -> dict:
+        path = self.path(symbol, timeframe, name)
+        with open(str(path), "rb") as f:
             return pickle.load(f)
 
 
@@ -140,28 +144,38 @@ class CodalAPIResource(ConfigurableResource):
 
 
 class CodalReportResource(ConfigurableResource):
-    _tables: dict[str, pd.DataFrame] = PrivateAttr(default_factory=dict)
-    _url: str = PrivateAttr()
 
-    @property
-    def tables(self):
-        return self._tables
-
-    def fetch(self, table_id: str = "") -> BeautifulSoup:
-        parsed_url = urlparse(self._url)
+    @classmethod
+    async def fetch(
+        cls, session: aiohttp.ClientSession, url: str, table_id: str = ""
+    ) -> BeautifulSoup:
+        parsed_url = urlparse(url)
         query = parse_qs(parsed_url.query)
         query["sheetId"] = [table_id]
         parsed_url = parsed_url._replace(query=urlencode(query, doseq=True))
-        response = requests.get(urlunparse(parsed_url), timeout=30)
-        if response.status_code != 200:
-            raise APIError(
-                f"Failed to fetch data from {self._url} "
-                f"for {table_id}: {response.status_code}",
-                status_code=response.status_code,
+        async with session.get(
+            urlunparse(parsed_url), timeout=240
+        ) as response:
+            if response.status != 200:
+                raise APIError(
+                    f"Failed to fetch data from {url} "
+                    f"for {table_id}: {response.status_code}",
+                    status_code=response.status_code,
+                )
+            text = await response.text()
+            soup = BeautifulSoup(text, "html.parser")
+            errors = soup.find(
+                "span", {"id": re.compile(r"ctl00[_$]lblError")}
             )
-        return BeautifulSoup(response.text, "html.parser")
+            if "عملیات با اشکال مواجه گردید" in errors.text:
+                raise APIError(
+                    f"Failed to fetch data: {errors.text}",
+                    status_code=response.status,
+                )
+            return soup
 
-    def parse_sheet(self, soup: BeautifulSoup):
+    @classmethod
+    def parse_sheet(cls, soup: BeautifulSoup):
         pd.set_option("future.no_silent_downcasting", True)
         pattern = re.compile(
             r"var datasource = (\{.*\});", re.MULTILINE | re.DOTALL
@@ -177,7 +191,7 @@ class CodalReportResource(ConfigurableResource):
         )[0]
         df = pd.DataFrame(sheet["tables"][table_idx]["cells"])
         df.drop_duplicates(inplace=True)
-        df = self.calculate_formulas(df)
+        df = cls.calculate_formulas(df)
         df = (
             df.pivot(
                 index="rowSequence", columns="columnSequence", values="value"
@@ -186,7 +200,7 @@ class CodalReportResource(ConfigurableResource):
             .T.reset_index(drop=True)
             .T
         )
-        self.tables[title] = self.clean_df(df)
+        return {title: cls.clean_df(df)}
 
     @staticmethod
     def calculate_formulas(df: pd.DataFrame):
@@ -223,7 +237,8 @@ class CodalReportResource(ConfigurableResource):
         kf.dropna(how="all", inplace=True)
         return kf
 
-    def parse_table_ids(self, soup: BeautifulSoup) -> list[str]:
+    @staticmethod
+    def parse_table_ids(soup: BeautifulSoup) -> list[str]:
         selector = soup.find(
             "select", {"id": re.compile(r"ctl00[_$]ddlTable")}
         )
@@ -233,15 +248,41 @@ class CodalReportResource(ConfigurableResource):
             if option["value"] in ["0", "1", "9"]
         ]
 
-    def fetch_tables(self, url: str):
+    @classmethod
+    async def fetch_table(cls, session, url: str, table_id: str) -> dict:
         logger = get_dagster_logger()
+        try:
+            soup = await cls.fetch(session, url, table_id)
+            return cls.parse_sheet(soup)
+        except APIError as e:
+            logger.warning(f"{type(e)}: {e}")
+            return {}
+        except TimeoutError as e:
+            logger.error(
+                f"Timeout while fetching {url} - table {table_id}: {e}"
+            )
+            raise e
+
+    @staticmethod
+    def concat_dict(x: dict, y: dict) -> dict:
+        return {**x, **y}
+
+    @classmethod
+    async def fetch_tables(cls, url: str):
         url = url.replace("Decision.aspx", "InterimStatement.aspx")
-        self._url = url
-        for table_id in self.parse_table_ids(self.fetch()):
+        async with aiohttp.ClientSession() as session:
+            soup = await cls.fetch(session, url)
+            table_ids = cls.parse_table_ids(soup)
+            tasks = [
+                asyncio.create_task(cls.fetch_table(session, url, table_id))
+                for table_id in table_ids
+            ]
             try:
-                self.parse_sheet(self.fetch(table_id))
-            except APIError as e:
-                logger.warning(f"{type(e)}: {e}")
+                return reduce(
+                    cls.concat_dict, await asyncio.gather(*tasks), {}
+                )
+            except TimeoutError as e:
+                raise e
 
 
 class APINinjaResource(ConfigurableResource):
@@ -343,11 +384,7 @@ class TSEMTMCAPIResource(ConfigurableResource):
                     response.raise_for_status()
 
                     return await getattr(response, response_type)()
-            except (
-                aiohttp.ClientError,
-                aiohttp.ServerTimeoutError,
-                aiohttp.ClientResponseError,
-            ) as e:
+            except aiohttp.ClientError as e:
                 err = str(e)
                 await asyncio.sleep(delay)
                 delay *= 2  # Exponential backoff

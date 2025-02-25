@@ -1,4 +1,4 @@
-FROM python:3.12-bullseye
+FROM python:3.12-slim
 
 ENV TZ=UTC \
     PYTHONUNBUFFERED=1 \
@@ -7,7 +7,8 @@ ENV TZ=UTC \
     PIP_NO_CACHE_DIR=1 \
     POETRY_NO_INTERACTION=1 \
     POETRY_VIRTUALENVS_CREATE=false \
-    POETRY_VERSION=1.8.2
+    POETRY_VERSION=2.1.1 \
+    DAGSTER_HOME=/opt/dagster
 
 RUN pip --retries 10 install --upgrade pip setuptools wheel
 RUN pip --retries 10 install poetry
@@ -15,5 +16,7 @@ RUN pip --retries 10 install poetry
 COPY pyproject.toml poetry.lock README.md ./
 RUN poetry install --without dev --no-root --no-directory --compile
 
-RUN mkdir -p /opt/dagster
-ENV DAGSTER_HOME=/opt/dagster
+RUN mkdir -p $DAGSTER_HOME
+COPY dagster.yaml workspace.yaml $DAGSTER_HOME
+
+# COPY . $DAGSTER_HOME/app

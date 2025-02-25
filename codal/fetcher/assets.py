@@ -1,6 +1,6 @@
+import asyncio
 import traceback
 from itertools import chain
-from typing import Any
 from urllib.parse import urlencode, urljoin
 
 import pandas as pd
@@ -110,9 +110,52 @@ def fetch_reports(params: CompanyReportOut) -> list[CompanyReportLetter]:
     return list(chain.from_iterable([listing.Letters for listing in listings]))
 
 
+async def fetch_report_data(
+    context: AssetExecutionContext,
+    report: CompanyReportLetter,
+    company_report: FileStoreCompanyReport,
+    codal_report_api: CodalReportResource,
+    semaphore: asyncio.Semaphore,
+):
+    file = {
+        "symbol": sanitize_persian(report.Symbol.strip()),
+        "year": report.jdate.year,
+        "timeframe": report.timeframe,
+        "name": report.jdate.isoformat(),
+        "error": False,
+    }
+    file["path"] = company_report.path(**file)
+    try:
+        context.log.info(f"fetching {report.Url}")
+        async with semaphore:
+            tables = await codal_report_api.fetch_tables(str(report.Url))
+        company_report.write(
+            tables,
+            symbol=file["symbol"],
+            timeframe=file["timeframe"],
+            name=file["name"],
+        )
+    except (TimeoutError, asyncio.CancelledError) as e:
+        raise e
+    except APIError:
+        file["error"] = True
+    except Exception as e:
+        context.log.error(f"error fetching {report.Url}: {e}")
+        raise Failure(
+            description=f"error fetching {report.Url}: {e}",
+            metadata={
+                "url": MetadataValue.url(str(report.Url)),
+                "error": MetadataValue.text(str(e)),
+                "trace": MetadataValue.text(str(traceback.format_exc())),
+            },
+            allow_retries=False,
+        )
+    return file
+
+
 @asset(
     retry_policy=RetryPolicy(
-        max_retries=3,
+        max_retries=5,
         delay=10,
         backoff=Backoff.EXPONENTIAL,
         jitter=Jitter.PLUS_MINUS,
@@ -120,7 +163,7 @@ def fetch_reports(params: CompanyReportOut) -> list[CompanyReportLetter]:
     partitions_def=company_timeframe_partition,
     automation_condition=AutomationCondition.eager(),
 )
-def fetch_company_reports(
+async def fetch_company_reports(
     context: AssetExecutionContext,
     fetch_tsetmc_filtered_companies,
     company_report: FileStoreCompanyReport,
@@ -148,49 +191,34 @@ def fetch_company_reports(
         f"fetching with params {params.model_dump(exclude_none=True)}"
     )
     context.log.info(f"fetch url: {MetadataValue.url(get_url(params))}")
-    files: list[dict[str, Any]] = []
-    for report in fetch_reports(params=params):
-        if (
-            report.jdate is None
-            or report.Symbol
-            not in fetch_tsetmc_filtered_companies["source_symbol"].values
-        ):
-            continue
-        company_report._symbol = sanitize_persian(report.Symbol.strip())
-        company_report._time_frame = timeframe
-        company_report._filename = report.jdate.isoformat()
-        file = {
-            "symbol": sanitize_persian(report.Symbol.strip()),
-            "year": report.jdate.year,
-            "timeframe": timeframe,
-            "name": report.jdate.isoformat(),
-            "path": company_report.path,
-            "error": False,
-        }
-        try:
-            context.log.info(f"fetching {report.Url}")
-            codal_report_api.fetch_tables(str(report.Url))
-            company_report.write(codal_report_api.tables)
-        except requests.exceptions.RequestException as e:
-            raise e
-        except APIError:
-            file["error"] = True
-        except Exception as e:
-            context.log.error(f"error fetching {report.Url}: {e}")
-            raise Failure(
-                description=f"error fetching {report.Url}: {e}",
-                metadata={
-                    "url": MetadataValue.url(str(report.Url)),
-                    "error": MetadataValue.text(str(e)),
-                    "trace": MetadataValue.text(str(traceback.format_exc())),
-                },
-                allow_retries=False,
-            )
-
-        files.append(file)
-    data = pd.DataFrame(
-        files, columns=["symbol", "year", "timeframe", "name", "path", "error"]
+    filtered_reports = filter(
+        lambda x: x.Symbol
+        in fetch_tsetmc_filtered_companies["source_symbol"].values,
+        fetch_reports(params=params),
     )
+    semaphore = asyncio.Semaphore(10)  # Limit concurrency
+    tasks = [
+        asyncio.create_task(
+            fetch_report_data(
+                context,
+                report,
+                company_report,
+                codal_report_api,
+                semaphore,
+            )
+        )
+        for report in filtered_reports
+    ]
+    try:
+        data = pd.DataFrame(
+            await asyncio.gather(*tasks),
+            columns=["symbol", "year", "timeframe", "name", "path", "error"],
+        )
+    except TimeoutError:
+        for task in tasks:
+            task.cancel()
+        raise
+
     return Output(
         data,
         metadata={
@@ -297,7 +325,7 @@ async def fetch_tsetmc_filtered_companies(
 ) -> pd.DataFrame:
     """
     list of non deleted codal companies listed in tsetmc,
-    excluded in industry group blacklist
+    excluding industry group blacklist
     """
     # for now its a mapping might search on industries
     # if industry indexes change over time

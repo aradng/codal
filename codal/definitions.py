@@ -12,8 +12,15 @@ from codal.fetcher.resources import (
     TgjuAPIResource,
     TSEMTMCAPIResource,
 )
-from codal.fetcher.sensors import freshness_checks, freshness_sensor
+from codal.fetcher.sensors import (
+    fetcher_freshness_checks,
+    fetcher_freshness_sensor,
+)
 from codal.parser import assets as parser_assets
+from codal.parser.sensors import (
+    parser_freshness_checks,
+    parser_freshness_sensor,
+)
 
 fetcher_assets = load_assets_from_modules(
     [fetcher_assets], group_name="fetcher"
@@ -41,8 +48,9 @@ defs = Definitions(
             DB_NAME="codal",
         ),
     },
-    asset_checks=[*freshness_checks],
+    asset_checks=[*parser_freshness_checks, *fetcher_freshness_checks],
     sensors=[
-        freshness_sensor,
+        fetcher_freshness_sensor,
+        parser_freshness_sensor,
     ],
 )
