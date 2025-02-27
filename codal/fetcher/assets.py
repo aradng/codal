@@ -3,6 +3,7 @@ import traceback
 from itertools import chain
 from urllib.parse import urlencode, urljoin
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import requests
 from dagster import (
@@ -18,6 +19,7 @@ from dagster import (
     TimeWindow,
     asset,
 )
+from jdatetime import date as jdate
 from pydantic import BaseModel
 
 from codal.fetcher.partitions import company_timeframe_partition
@@ -368,3 +370,111 @@ async def fetch_tsetmc_stocks(
     """
 
     return await tsetmc_api.fetch_stocks(fetch_tsetmc_filtered_companies)
+
+
+@asset(automation_condition=AutomationCondition.eager())
+def company_report_summary(
+    fetch_company_reports: dict[str, pd.DataFrame],
+):
+    """
+    Generate a summary of reports, including an image visualization.
+    """
+
+    df = pd.concat(fetch_company_reports.values())
+    df["jdate"] = df["name"].apply(jdate.fromisoformat)
+    df["date"] = pd.to_datetime(df["jdate"].apply(lambda x: x.togregorian()))
+    summary_df = (
+        df.groupby(["date", "timeframe"])
+        .agg(
+            num_records=("error", "count"),
+            total_errors=("error", "sum"),
+        )
+        .reset_index()
+    )
+    summary_df["total_errors"] = summary_df["total_errors"].astype(int)
+    summary_df["num_records"] = summary_df["num_records"].astype(int)
+    timeframes = sorted(summary_df["timeframe"].unique())
+
+    plt.style.use("dark_background")
+    plt.tight_layout()
+    fig, axes = plt.subplots(len(timeframes), 1, figsize=(30, 20))
+
+    for i, timeframe in enumerate(timeframes):
+        subset = summary_df[summary_df["timeframe"] == timeframe]
+
+        axes[i].plot(
+            subset["date"],
+            subset["num_records"],
+            label=f"Records ({timeframe} months)",
+            marker="o",
+            linewidth=2,
+        )
+        axes[i].plot(
+            subset["date"],
+            subset["total_errors"],
+            label=f"Errors ({timeframe} months)",
+            marker="x",
+            linestyle="dashed",
+            linewidth=2,
+        )
+        axes[i].fill_between(subset["date"], subset["num_records"], alpha=0.2)
+        axes[i].fill_between(subset["date"], subset["total_errors"], alpha=0.4)
+        axes[i].set_ylabel("Counts", fontsize=14, color="white")
+        axes[i].set_title(
+            f"Records & Errors Over Time: {timeframe} Months",
+            fontsize=16,
+            color="white",
+        )
+        axes[i].legend(loc="upper left", fontsize=12)
+        axes[i].grid(color="gray", linestyle="dashed", alpha=0.5)
+
+        total_records = subset["num_records"].sum()
+        total_errors = subset["total_errors"].sum()
+        relative_error = (
+            (total_errors / total_records) * 100 if total_records > 0 else 0
+        )
+
+        textstr = (
+            f"Total Records: {total_records:,}\n"
+            f"Total Errors: {total_errors:,}\n"
+            f"Error %: {relative_error:.2f}%"
+        )
+        props = dict(boxstyle="round", facecolor="black", alpha=0.5)
+        axes[i].text(
+            0.005,
+            0.55,
+            textstr,
+            transform=axes[i].transAxes,
+            fontsize=14,
+            color="white",
+            bbox=props,
+        )
+
+    plt.xticks(rotation=45, fontsize=12, color="white")
+    plt.yticks(fontsize=12, color="white")
+
+    fig.suptitle(
+        "Company Report Summary: Records & Errors Over Time",
+        fontsize=18,
+        color="white",
+    )
+    img_path = "./data/company_report_summary.png"
+    plt.savefig(img_path, bbox_inches="tight", dpi=300)
+    plt.close()
+
+    summary = summary_df.groupby("timeframe").agg(
+        num_records=("num_records", "sum"), errors=("total_errors", "sum")
+    )
+    summary["error_percentage"] = (
+        summary["errors"] / summary["num_records"]
+    ) * 100
+
+    summary.loc["total"] = summary.sum(numeric_only=True)
+    return Output(
+        summary_df,
+        metadata={
+            "summary": MetadataValue.md(summary.to_markdown()),
+            "image": MetadataValue.path(img_path),
+            "path": MetadataValue.path(img_path),
+        },
+    )
