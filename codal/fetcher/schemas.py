@@ -84,7 +84,7 @@ class CompanyReportLetter(BaseModel):
 
     @computed_field  # type: ignore[misc]
     @property
-    def jdate(self) -> jdate:
+    def jdate(self) -> jdate | None:
         if match := re.search(r"\d{4}/\d{2}/\d{2}", self.Title):
             res = match.group().replace("/", "-")
             try:
@@ -94,7 +94,7 @@ class CompanyReportLetter(BaseModel):
                     year, month, day = map(int, res.split("-"))
                     return jdate(year=year, month=month, day=day - 1)
                 raise ValueError(f"could not correct jdate range {res}")
-        raise ValueError(f"could not find jdate in {self.Title}")
+        return None
 
     @computed_field  # type: ignore[misc]
     @property

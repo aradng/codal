@@ -1,5 +1,21 @@
 version: "3"
 services:
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: $DAGSTER_POSTGRES_USER
+      POSTGRES_PASSWORD: $DAGSTER_POSTGRES_PASSWORD
+      POSTGRES_DB: $DAGSTER_POSTGRES_DB
+    volumes:
+      - /data/pgdata:/var/lib/postgresql/data
+    networks:
+      - dagster
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $DAGSTER_POSTGRES_USER -d $DAGSTER_POSTGRES_DB"]
+      interval: 10s
+      timeout: 8s
+      retries: 5
+
   mongo:
     image: mongo:4.4.18
     environment:
@@ -13,24 +29,48 @@ services:
     networks:
       - dagster
 
-  dagster-daemon:
+  code-server:
     build: .
     working_dir: /apps
+    env_file: .env
+    environment:
+      DAGSTER_CURRENT_IMAGE: codal-code-server
+    command: dagster code-server start -h 0.0.0.0 -p 4000 -m codal.definitions --inject-env-vars-from-instance
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/io_manager_storage:/tmp/io_manager_storage
+      - /dagster/history:/opt/dagster/history
+      - /dagster/storage:/opt/dagster/storage
+      - /dagster/schedules:/opt/dagster/schedules
+      - .:/apps
+    restart: always
+    depends_on:
+      - postgres
+      - mongo
+    networks:
+      - dagster
+
+  dagster-daemon:
+    build: .
     command: dagster-daemon run
     env_file: .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /tmp/io_manager_storage:/tmp/io_manager_storage
-      - /dagster:/opt/dagster
+      - /dagster/history:/opt/dagster/history
+      - /dagster/storage:/opt/dagster/storage
+      - /dagster/schedules:/opt/dagster/schedules
       - ./dagster.yaml:/opt/dagster/dagster.yaml
-      - .:/apps
+      - ./workspace.yaml:/opt/dagster/workspace.yaml
     restart: always
+    depends_on:
+      - postgres
+      - code-server
     networks:
       - dagster
 
   dagster-webserver:
     build: .
-    working_dir: /apps
     command: dagster-webserver -h 0.0.0.0 -p 3000
     ports:
       - "3000:3000"
@@ -38,10 +78,15 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /tmp/io_manager_storage:/tmp/io_manager_storage
-      - /dagster:/opt/dagster
+      - /dagster/history:/opt/dagster/history
+      - /dagster/storage:/opt/dagster/storage
+      - /dagster/schedules:/opt/dagster/schedules
       - ./dagster.yaml:/opt/dagster/dagster.yaml
-      - .:/apps
+      - ./workspace.yaml:/opt/dagster/workspace.yaml
     restart: always
+    depends_on:
+      - postgres
+      - code-server
     networks:
       - dagster
 

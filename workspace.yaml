@@ -1,5 +1,5 @@
-# load_from:
-#   - grpc_server:
-#       host: codal-code-server
-#       port: 4000
-#       location_name: "codal"
+load_from:
+  - grpc_server:
+      host: code-server
+      port: 4000
+      location_name: codal

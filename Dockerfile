@@ -17,6 +17,7 @@ COPY pyproject.toml poetry.lock README.md ./
 RUN poetry install --without dev --no-root --no-directory --compile
 
 RUN mkdir -p $DAGSTER_HOME
-COPY dagster.yaml workspace.yaml $DAGSTER_HOME
+WORKDIR $DAGSTER_HOME
+# COPY dagster.yaml workspace.yaml .
 
 # COPY . $DAGSTER_HOME/app

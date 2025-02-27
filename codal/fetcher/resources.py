@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import pickle
 import re
 from datetime import date, datetime, timedelta
@@ -14,6 +15,7 @@ import aiohttp
 import numpy as np
 import pandas as pd
 import requests
+import tenacity
 from bs4 import BeautifulSoup
 from bson.datetime_ms import DatetimeMS
 from dagster import (
@@ -145,31 +147,43 @@ class CodalAPIResource(ConfigurableResource):
 
 class CodalReportResource(ConfigurableResource):
 
-    @classmethod
+    _logger: logging.Logger = PrivateAttr(default_factory=get_dagster_logger)
+
     async def fetch(
-        cls, session: aiohttp.ClientSession, url: str, table_id: str = ""
+        self, session: aiohttp.ClientSession, url: str, table_id: str = ""
     ) -> BeautifulSoup:
         parsed_url = urlparse(url)
         query = parse_qs(parsed_url.query)
         query["sheetId"] = [table_id]
         parsed_url = parsed_url._replace(query=urlencode(query, doseq=True))
+
         async with session.get(
-            urlunparse(parsed_url), timeout=240
+            urlunparse(parsed_url),
+            timeout=240,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/133.0.0.0 Safari/537.36"
+            },
         ) as response:
             if response.status != 200:
                 raise APIError(
                     f"Failed to fetch data from {url} "
-                    f"for {table_id}: {response.status_code}",
-                    status_code=response.status_code,
+                    f"for {table_id}: {response.status}",
+                    status_code=response.status,
                 )
             text = await response.text()
             soup = BeautifulSoup(text, "html.parser")
             errors = soup.find(
                 "span", {"id": re.compile(r"ctl00[_$]lblError")}
             )
-            if "عملیات با اشکال مواجه گردید" in errors.text:
+            if (
+                errors is not None
+                and "عملیات با اشکال مواجه گردید" in errors.text
+            ):
                 raise APIError(
-                    f"Failed to fetch data: {errors.text}",
+                    f"Failed to fetch data from {url} "
+                    f"for {table_id}: {errors.text}",
                     status_code=response.status,
                 )
             return soup
@@ -181,16 +195,26 @@ class CodalReportResource(ConfigurableResource):
             r"var datasource = (\{.*\});", re.MULTILINE | re.DOTALL
         )
         script_tag = soup.find("script", string=pattern)
+        if script_tag is None:
+            raise APIError(
+                "datasource",
+                status_code=200,
+            )
         script = pattern.search(script_tag.text)
         assert isinstance(script, re.Match)
         sheet = json.loads(script.group(1))["sheets"][0]
         title = sheet["title_Fa"]
-        table_idx = max(
-            [(i, len(j["cells"])) for i, j in enumerate(sheet["tables"])],
-            key=lambda x: x[1],
-        )[0]
+        try:
+            table_idx = max(
+                [(i, len(j["cells"])) for i, j in enumerate(sheet["tables"])],
+                key=lambda x: x[1],
+            )[0]
+        except ValueError as e:
+            if "iterable argument is empty" in str(e):
+                return {}
+            raise
         df = pd.DataFrame(sheet["tables"][table_idx]["cells"])
-        df.drop_duplicates(inplace=True)
+        df.drop_duplicates(["columnSequence", "rowSequence"], inplace=True)
         df = cls.calculate_formulas(df)
         df = (
             df.pivot(
@@ -240,49 +264,68 @@ class CodalReportResource(ConfigurableResource):
     @staticmethod
     def parse_table_ids(soup: BeautifulSoup) -> list[str]:
         selector = soup.find(
-            "select", {"id": re.compile(r"ctl00[_$]ddlTable")}
+            "select", {"id": re.compile(r"^ctl00[_$]ddlTable$|^ddlTable$")}
+        ) or soup.find(
+            "select", {"name": re.compile(r"^ctl00[_$]ddlSheet$|^ddlSheet$")}
         )
+        if selector is None:
+            logger = get_dagster_logger()
+            logger.error("Failed to find table selector")
+            logger.error(str(soup.prettify()))
         return [
             option["value"]
             for option in selector.find_all("option")
             if option["value"] in ["0", "1", "9"]
         ]
 
-    @classmethod
-    async def fetch_table(cls, session, url: str, table_id: str) -> dict:
-        logger = get_dagster_logger()
+    async def fetch_table(self, session, url: str, table_id: str) -> dict:
+        @tenacity.retry(
+            wait=tenacity.wait_exponential(
+                multiplier=5,
+                min=5,
+                max=30,
+            ),
+            stop=tenacity.stop_after_attempt(5),
+            before_sleep=tenacity.before_sleep_log(
+                self._logger, logging.WARNING
+            ),
+            reraise=True,
+        )
+        async def _inner():
+            soup = await self.fetch(session, url, table_id)
+            return self.parse_sheet(soup)
+
         try:
-            soup = await cls.fetch(session, url, table_id)
-            return cls.parse_sheet(soup)
+            return await _inner()
         except APIError as e:
-            logger.warning(f"{type(e)}: {e}")
-            return {}
+            if str(e) == "datasource":
+                self._logger.error(
+                    f"Failed to find datasource from {url} for {table_id}"
+                )
+            else:
+                self._logger.error(f"{type(e)}: {e}")
+            return {"error": True}
         except TimeoutError as e:
-            logger.error(
+            self._logger.error(
                 f"Timeout while fetching {url} - table {table_id}: {e}"
             )
-            raise e
+            raise
 
     @staticmethod
     def concat_dict(x: dict, y: dict) -> dict:
         return {**x, **y}
 
-    @classmethod
-    async def fetch_tables(cls, url: str):
+    async def fetch_tables(self, url: str):
+        self._logger = get_dagster_logger()
         url = url.replace("Decision.aspx", "InterimStatement.aspx")
         async with aiohttp.ClientSession() as session:
-            soup = await cls.fetch(session, url)
-            table_ids = cls.parse_table_ids(soup)
+            soup = await self.fetch(session, url)
+            table_ids = self.parse_table_ids(soup)
             tasks = [
-                asyncio.create_task(cls.fetch_table(session, url, table_id))
+                asyncio.create_task(self.fetch_table(session, url, table_id))
                 for table_id in table_ids
             ]
-            try:
-                return reduce(
-                    cls.concat_dict, await asyncio.gather(*tasks), {}
-                )
-            except TimeoutError as e:
-                raise e
+            return reduce(self.concat_dict, await asyncio.gather(*tasks), {})
 
 
 class APINinjaResource(ConfigurableResource):

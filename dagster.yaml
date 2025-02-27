@@ -14,6 +14,22 @@ run_coordinator:
 #   max_resume_run_attempts: 0
 #   poll_interval_seconds: 120
 
+run_launcher:
+  module: dagster_docker
+  class: DockerRunLauncher
+  config:
+    network: dagster
+    container_kwargs:
+      auto_remove: true
+      working_dir: /apps
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+        - /tmp/io_manager_storage:/tmp/io_manager_storage
+        - /dagster/history:/opt/dagster/history
+        - /dagster/storage:/opt/dagster/storage
+        - /dagster/schedules:/opt/dagster/schedules
+        - /home/aradng/codal:/apps
+
 sensors:
   use_threads: true
   num_workers: 8
@@ -26,4 +42,4 @@ telemetry:
   enabled: false
 
 code_servers:
-  local_startup_timeout: 600
+  local_startup_timeout: 300

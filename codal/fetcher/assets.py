@@ -117,6 +117,7 @@ async def fetch_report_data(
     codal_report_api: CodalReportResource,
     semaphore: asyncio.Semaphore,
 ):
+    assert report.jdate is not None
     file = {
         "symbol": sanitize_persian(report.Symbol.strip()),
         "year": report.jdate.year,
@@ -126,8 +127,8 @@ async def fetch_report_data(
     }
     file["path"] = company_report.path(**file)
     try:
-        context.log.info(f"fetching {report.Url}")
         async with semaphore:
+            context.log.info(f"fetching {report.Url}")
             tables = await codal_report_api.fetch_tables(str(report.Url))
         company_report.write(
             tables,
@@ -135,6 +136,8 @@ async def fetch_report_data(
             timeframe=file["timeframe"],
             name=file["name"],
         )
+        if "error" in tables:
+            file["error"] = True
     except (TimeoutError, asyncio.CancelledError) as e:
         raise e
     except APIError:
@@ -193,10 +196,11 @@ async def fetch_company_reports(
     context.log.info(f"fetch url: {MetadataValue.url(get_url(params))}")
     filtered_reports = filter(
         lambda x: x.Symbol
-        in fetch_tsetmc_filtered_companies["source_symbol"].values,
+        in fetch_tsetmc_filtered_companies["source_symbol"].values
+        and x.jdate is not None,
         fetch_reports(params=params),
     )
-    semaphore = asyncio.Semaphore(10)  # Limit concurrency
+    semaphore = asyncio.Semaphore(3)  # Limit concurrency
     tasks = [
         asyncio.create_task(
             fetch_report_data(
@@ -215,8 +219,6 @@ async def fetch_company_reports(
             columns=["symbol", "year", "timeframe", "name", "path", "error"],
         )
     except TimeoutError:
-        for task in tasks:
-            task.cancel()
         raise
 
     return Output(
@@ -333,6 +335,7 @@ async def fetch_tsetmc_filtered_companies(
         2: "اوراق مشارکت و سپرده های بانکی",
         46: "تجارت عمده فروشی به جز وسایل نقلیه موتور",
         56: "سرمایه گذاریها",
+        57: "بانکها و موسسات اعتباری",
         66: "بیمه وصندوق بازنشستگی به جزتامین اجتماعی",
         67: "فعالیتهای کمکی به نهادهای مالی واسط",
         61: "حمل و نقل آبی",
