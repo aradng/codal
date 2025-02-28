@@ -592,6 +592,8 @@ class MongoIOManager(ConfigurableIOManager):
         )
 
     def handle_output(self, context: OutputContext, df: pd.DataFrame):
+        if df.empty:
+            return
         if not self._inited:
             self.init_db()
         for col in filter(lambda x: "date" == x, df.columns):

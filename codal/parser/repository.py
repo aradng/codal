@@ -10,8 +10,9 @@ from fuzzywuzzy import process  # type: ignore[import-untyped]
 from jdatetime import date as JalaliDate
 from pandas.core.frame import DataFrame
 
+from codal.fetcher.utils import sanitize_persian
 from codal.parser.exceptions import IncompatibleFormatError
-from codal.parser.schemas import PriceCollection
+from codal.parser.schemas import PriceCollection, PriceDFs
 from codal.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -97,7 +98,7 @@ def find_row_for_variable(
     matched, score = process.extractOne(row_name, table_row_names)
 
     if values.get(var_name) is None:
-        if score >= 95:
+        if score >= 90:
             idx = table.iloc[:, col] == matched
             matched_row: DataFrame = table[idx]
             var = matched_row.iloc[0, col + 1]
@@ -156,12 +157,21 @@ def calc_financial_ratios(df: DataFrame, calculations: dict) -> pd.Series:
 
 
 def extract_financial_data(
-    tables: dict,
+    tables: dict[str, DataFrame],
     table_names_map: dict,
     calculations: dict,
     jdate: JalaliDate,
     symbol: str,
+    price_collection: DataFrame,
 ) -> pd.Series:
+
+    # sanitize persian [arad]
+    tables = {
+        sanitize_persian(k): v.map(
+            lambda x: sanitize_persian(x) if isinstance(x, str) else x
+        )
+        for k, v in tables.items()
+    }
 
     extracted_variables = extract_variables(tables, table_names_map)
 
@@ -169,7 +179,6 @@ def extract_financial_data(
         "revenue"
     ] / (extracted_variables.loc["capital"] / 1000)
 
-    price_collection = collect_prices(jdate, symbol)
     extracted_variables = pd.concat(
         [
             extracted_variables,
@@ -231,7 +240,8 @@ def get_price(
 
 
 def safe_price_extraction(
-    file_path: str,
+    # file_path: str,
+    prices: DataFrame,
     jdate: JalaliDate,
     column: str,
     date_format: str = "%Y/%m/%d",
@@ -241,8 +251,8 @@ def safe_price_extraction(
     Returns (price, base_price) or (np.nan, np.nan) in case of errors.
     """
     try:
-        with open(file_path) as f:
-            prices = pd.read_csv(f)
+        # with open(file_path) as f:
+        #     prices = pd.read_csv(f)
         price = get_price(
             prices, jdate, column=column, date_format=date_format
         )
@@ -254,22 +264,24 @@ def safe_price_extraction(
         )
         return price, base_price
     except Exception as e:
-        logger.warning(f"Error fetching price from {file_path}: {e}")
+        logger.warning(f"Error fetching price from xxx: {e}")
         return np.nan, np.nan
 
 
-def collect_prices(jdate: JalaliDate, symbol: str) -> PriceCollection:
+def collect_prices(
+    jdate: JalaliDate, symbol: str, price_dfs: PriceDFs
+) -> PriceCollection:
     stock_price, base_stock_price = safe_price_extraction(
-        settings.TSETMC_STOCKS_CSV_PATH, jdate, symbol, "%Y-%m-%d"
+        price_dfs.TSETMC_STOCKS, jdate, symbol, "%Y-%m-%d"
     )
     gold_price, base_gold_price = safe_price_extraction(
-        settings.GOLD_PRICE_CSV_PATH, jdate, "close"
+        price_dfs.GOLD_PRICES, jdate, "close"
     )
     oil_price, base_oil_price = safe_price_extraction(
-        settings.OIL_PRICE_CSV_PATH, jdate, "close"
+        price_dfs.OIL_PRICES, jdate, "close"
     )
     usd_price, base_usd_price = safe_price_extraction(
-        settings.USD_PRICE_CSV_PATH, jdate, "close"
+        price_dfs.USD_PRICES, jdate, "close"
     )
 
     try:

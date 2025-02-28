@@ -25,6 +25,39 @@ class Company(Document):
     deleted: bool
 
 
+class Report(Document):
+    class Settings:
+        name = "reports"
+
+    net_profit: float
+    gross_profit: float
+    operating_income: float
+    earnings_per_share: float
+    revenue: float
+    cost_of_revenue: float
+
+    non_current_assets: float
+    current_assets: float
+    total_assets: float
+    long_term_liabilities: float
+    current_liabilities: float
+    total_liabilities: float
+    equity: float
+    total_liabilities_and_equity: float
+    capital: float
+    cash: float
+    short_term_investments: float
+    long_term_investments: float
+    inventories: float
+
+    operating_cash_flow: float
+    cash_taxes_paid: float
+    # net_cash_flow_operating: float
+    net_cash_flow_investing: float
+    net_cash_flow_financing: float
+    net_increase_decrease_cash: float
+
+
 class Profile(Document):
     class Settings:
         name = "Profiles"

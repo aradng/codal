@@ -1,4 +1,4 @@
-from typing import Callable
+from collections.abc import Callable
 
 from codal.parser.financial_ratios import (
     calc_asset_turnover,
@@ -12,6 +12,9 @@ from codal.parser.financial_ratios import (
     calc_current_ratio,
     calc_debt_ratio,
     calc_debt_to_equity_ratio,
+    calc_delta_price_to_delta_gold,
+    calc_delta_price_to_delta_oil,
+    calc_delta_price_to_delta_usd,
     calc_earnings_quality,
     calc_equity_ratio,
     calc_gross_profit_margin,
@@ -19,59 +22,55 @@ from codal.parser.financial_ratios import (
     calc_operating_margin,
     calc_pe_ratio,
     calc_price_sales_ratio,
+    calc_price_to_gold,
+    calc_price_to_oil,
+    calc_price_to_usd,
     calc_profit_margin,
     calc_quick_ratio,
     calc_return_on_assets,
     calc_return_on_equity,
     calc_revenue_to_GDP,
-    calc_price_to_gold,
-    calc_price_to_oil,
-    calc_price_to_usd,
-    calc_delta_price_to_delta_gold,
-    calc_delta_price_to_delta_oil,
-    calc_delta_price_to_delta_usd,
     calc_total_debt_to_equity_ratio,
 )
-
 
 # for year after 1398
 table_names_map = {
     "صورت سود و زیان": {
-        "سود(زيان) خالص": "net_profit",
-        "سود(زيان) ناخالص": "gross_profit",
-        "سود(زيان) عملياتى": "operating_income",
-        "سود (زيان) خالص هر سهم – ريال": "earnings_per_share",
-        "درآمدهاي عملياتي": "revenue",
-        "بهاى تمام شده درآمدهاي عملياتي": "cost_of_revenue",
+        "سود (زیان) خالص": "net_profit",
+        "سود (زیان) ناخالص": "gross_profit",
+        "سود (زیان) عملیاتی": "operating_income",
+        "سود (زیان) خالص هر سهم– ریال": "earnings_per_share",
+        "درآمدهای عملیاتی": "revenue",
+        "بهاى تمام شده درآمدهای عملیاتی": "cost_of_revenue",
     },
     "صورت وضعیت مالی": {
-        "جمع دارايي‌هاي غيرجاري": "non_current_assets",
-        "جمع دارايي‌هاي جاري": "current_assets",
-        "جمع دارايي‌ها": "total_assets",
-        "جمع بدهي‌هاي غيرجاري": "long_term_liabilities",  # ##
-        "جمع بدهي‌هاي جاري": "current_liabilities",
-        "جمع بدهي‌ها": "total_liabilities",
+        "جمع دارایی‌های غیرجاری": "non_current_assets",
+        "جمع دارایی‌های جاری": "current_assets",
+        "جمع دارایی‌ها": "total_assets",
+        "جمع بدهی‌های غیرجاری": "long_term_liabilities",  # ##
+        "جمع بدهی‌های جاری": "current_liabilities",
+        "جمع بدهی‌ها": "total_liabilities",
         "جمع حقوق مالکانه": "equity",
-        "جمع حقوق مالکانه و بدهي‌ها": "total_liabilities_and_equity",
-        "سرمايه": "capital",
-        "موجودي نقد": "cash",
-        "سرمايه‌گذاري‌هاي کوتاه‌مدت": "short_term_investments",
-        "سرمايه‌گذاري‌هاي بلندمدت": "long_term_investments",
-        "موجودي مواد و کالا": "inventories",  # سفارشات و پيش‌پرداخت‌ها +
+        "جمع حقوق مالکانه و بدهی‌ها": "total_liabilities_and_equity",
+        "سرمایه": "capital",
+        "موجودی نقد": "cash",
+        "سرمایه‌گذاری‌های کوتاه‌مدت": "short_term_investments",
+        "سرمایه‌گذاری‌های بلندمدت": "long_term_investments",
+        "موجودی مواد و کالا": "inventories",  # سفارشات و پيش‌پرداخت‌ها +
     },
     "صورت جریان های نقدی": {
-        "نقد حاصل از عمليات": "operating_cash_flow",
-        "پرداخت‌هاي نقدي بابت ماليات بر درآمد": "cash_taxes_paid",
-        "جريان ‌خالص ‌ورود‌ (خروج) ‌نقد حاصل از فعاليت‌هاي ‌عملياتي": (
+        "نقد حاصل از عملیات": "operating_cash_flow",
+        "پرداخت‌های نقدی بابت مالیات بر درآمد": "cash_taxes_paid",
+        "جریان ‌خالص ‌ورود‌ (خروج) ‌نقد حاصل از فعالیت‌های ‌عملیاتی": (
             "net_cash_flow_operating"
         ),
-        "جريان خالص ورود (خروج) نقد حاصل از فعاليت‌هاي سرمايه‌گذاري": (
+        "جريان خالص ورود (خروج) نقد حاصل از فعاليت‌های سرمایه‌گذاری": (
             "net_cash_flow_investing"
         ),
-        "جريان خالص ورود (خروج) نقد حاصل از فعاليت‌هاي تامين مالي": (
+        "جريان خالص ورود (خروج) نقد حاصل از فعالیت‌های تامين مالی": (
             "net_cash_flow_financing"
         ),
-        "خالص افزايش (کاهش) در موجودي نقد": "net_increase_decrease_cash",
+        "خالص افزايش (کاهش) در موجودی نقد": "net_increase_decrease_cash",
     },
 }
 

@@ -82,6 +82,11 @@ def companies(
         "fetch_tsetmc_stocks": AssetIn(
             key="fetch_tsetmc_stocks", input_manager_key="df"
         ),
+        "fetch_gold": AssetIn(key="fetch_gold", input_manager_key="df"),
+        "fetch_usd": AssetIn(key="fetch_usd", input_manager_key="df"),
+        "fetch_commodity": AssetIn(
+            key="fetch_commodity", input_manager_key="df"
+        ),
         "get_companies": AssetIn(key="get_companies", input_manager_key="df"),
     },
 )
@@ -89,6 +94,9 @@ async def ata_kek(
     context: AssetExecutionContext,
     fetch_company_reports: pd.DataFrame,
     fetch_tsetmc_stocks: pd.DataFrame,
+    fetch_gold: pd.DataFrame,
+    fetch_usd: pd.DataFrame,
+    fetch_commodity: pd.DataFrame,
     get_companies: pd.DataFrame,
 ) -> Output[pd.DataFrame]:
 
@@ -105,7 +113,8 @@ async def ata_kek(
         table_names_map,
         table_names_map_b98,
     )
-    from codal.parser.repository import extract_financial_data
+    from codal.parser.repository import collect_prices, extract_financial_data
+    from codal.parser.schemas import PriceDFs
 
     logging.basicConfig(
         filename=os.path.join(os.getcwd(), "ata_kek.log"),  # Log file
@@ -129,8 +138,27 @@ async def ata_kek(
                     f"Processing report: {company['path']}"
                     f" for {company['symbol']}"
                 )
+                # d2 = {"name": ["e", "f", "g", "h"], "age": [50, 60, 70, 80]}
+                # ddf = pd.DataFrame(d2)
 
                 jdate = jdate.fromisoformat(company["name"].split(".")[0])
+
+                price_collection = collect_prices(
+                    jdate,
+                    company["symbol"],
+                    PriceDFs(
+                        TSETMC_STOCKS=fetch_tsetmc_stocks,
+                        GOLD_PRICES=fetch_gold,
+                        OIL_PRICES=fetch_commodity,
+                        USD_PRICES=fetch_usd,
+                    ),
+                    # PriceDFs(
+                    #     TSETMC_STOCKS=ddf,
+                    #     GOLD_PRICES=ddf,
+                    #     OIL_PRICES=ddf,
+                    #     USD_PRICES=ddf,
+                    # ),
+                )
 
                 try:
                     extracted_data = extract_financial_data(
@@ -143,6 +171,7 @@ async def ata_kek(
                         calculations,
                         jdate,
                         company["symbol"],
+                        price_collection,
                     )
                 except IncompatibleFormatError:
                     extracted_data = extract_financial_data(
@@ -151,8 +180,8 @@ async def ata_kek(
                         calculations,
                         jdate,
                         company["symbol"],
+                        price_collection,
                     )
-                # print(fetch_tsetmc_stocks)
 
                 extracted_data["name"] = company["symbol"]
                 extracted_data["is_industry"] = False
