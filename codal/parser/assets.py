@@ -1,7 +1,14 @@
 import pandas as pd
-from dagster import AssetIn, AutomationCondition, Output, asset
+from dagster import (
+    AssetExecutionContext,
+    AssetIn,
+    AutomationCondition,
+    Output,
+    asset,
+)
 
 from codal.fetcher.partitions import company_timeframe_partition
+from codal.parser.exceptions import IncompatibleFormatError
 
 
 @asset(
@@ -79,11 +86,17 @@ def companies(
     },
 )
 async def ata_kek(
+    context: AssetExecutionContext,
     fetch_company_reports: pd.DataFrame,
     fetch_tsetmc_stocks: pd.DataFrame,
     get_companies: pd.DataFrame,
 ) -> Output[pd.DataFrame]:
+
+    # context.log.info("Processing ata_kek")
+    # logger = context.log
+
     import logging
+    import os
 
     from jdatetime import date as jdate
 
@@ -94,9 +107,8 @@ async def ata_kek(
     )
     from codal.parser.repository import extract_financial_data
 
-    # Configure Logger
     logging.basicConfig(
-        filename="ata_kek.log",  # Log file
+        filename=os.path.join(os.getcwd(), "ata_kek.log"),  # Log file
         level=logging.INFO,  # Log everything (INFO and above)
         format="%(asctime)s - %(levelname)s - %(message)s",  # Log format
     )
@@ -109,49 +121,62 @@ async def ata_kek(
             f"Processing {len(fetch_company_reports)} company reports."
         )
 
-        for _, i in fetch_company_reports.iterrows():
+        for _, company in fetch_company_reports.iterrows():
             try:
-                with open(i["path"]) as f:
-                    file_content = f.read()
+                data = pd.read_pickle(rf"{company["path"]}")
 
                 logger.info(
-                    f"Processing report: {i['path']} for {i['symbol']}"
+                    f"Processing report: {company['path']}"
+                    f" for {company['symbol']}"
                 )
 
-                jdate = jdate.fromisoformat(i["name"].split(".")[0])
+                jdate = jdate.fromisoformat(company["name"].split(".")[0])
 
-                # Extract financial data
-                extracted_data = extract_financial_data(
-                    file_content,
-                    (
-                        table_names_map_b98
-                        if jdate.year <= 1398
-                        else table_names_map
-                    ),
-                    calculations,
-                    jdate,
-                    i["symbol"],
-                )
+                try:
+                    extracted_data = extract_financial_data(
+                        data,
+                        (
+                            table_names_map_b98
+                            if jdate.year <= 1398
+                            else table_names_map
+                        ),
+                        calculations,
+                        jdate,
+                        company["symbol"],
+                    )
+                except IncompatibleFormatError:
+                    extracted_data = extract_financial_data(
+                        data,
+                        table_names_map_b98,
+                        calculations,
+                        jdate,
+                        company["symbol"],
+                    )
+                # print(fetch_tsetmc_stocks)
 
-                extracted_data["name"] = i["symbol"]
+                extracted_data["name"] = company["symbol"]
                 extracted_data["is_industry"] = False
                 extracted_data["industry_group"] = get_companies.loc[
-                    get_companies["symbol"] == i["symbol"], "industry_group"
+                    get_companies["symbol"] == company["symbol"],
+                    "industry_group",
                 ].values[0]
 
-                extracted_data["timeframe"] = i["timeframe"]
-                extracted_data["year"] = i["year"]
-                jdate_value = jdate.fromisoformat(i["name"].split(".")[0])
+                extracted_data["timeframe"] = company["timeframe"]
+                extracted_data["year"] = company["year"]
+                jdate_value = jdate.fromisoformat(
+                    company["name"].split(".")[0]
+                )
                 extracted_data["jdate"] = jdate_value.isoformat()
                 extracted_data["date"] = jdate_value.togregorian()
 
                 answer.append(extracted_data)
-                logger.info(f"Successfully processed {i['symbol']}")
+                logger.info(f"Successfully processed {company['symbol']}")
                 logger.info(f"Answer Length: {len(answer)}")
 
             except Exception as e:
                 logger.error(
-                    f"Error processing {i['symbol']} at {i['path']}: {e}",
+                    f"Error processing {company['symbol']}"
+                    f" at {company['path']}: {e}",
                     exc_info=True,
                 )
 
@@ -160,8 +185,10 @@ async def ata_kek(
 
     # Concatenate results
     if answer:
-        result_df = pd.concat(answer)
+        # result_df = pd.concat(answer)
+        result_df = pd.DataFrame(answer)
         logger.info("Successfully concatenated all data.")
+        result_df.to_csv(os.path.join(os.getcwd(), "ata_kek.csv"), mode="a")
         return Output(result_df, metadata={"records": len(result_df)})
     else:
         logger.warning("No data was processed successfully.")

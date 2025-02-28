@@ -10,6 +10,7 @@ from fuzzywuzzy import process  # type: ignore[import-untyped]
 from jdatetime import date as JalaliDate
 from pandas.core.frame import DataFrame
 
+from codal.parser.exceptions import IncompatibleFormatError
 from codal.parser.schemas import PriceCollection
 from codal.settings import settings
 
@@ -111,25 +112,28 @@ def find_row_for_variable(
             values[var_name] = None
 
 
-def extract_variables(table: DataFrame, row_names_map: dict) -> DataFrame:
+def extract_variables(
+    tables: dict[str, DataFrame], table_names_map: dict
+) -> DataFrame:
     values: dict = {}
-    table.rename(
-        columns={
-            x: y for x, y in zip(table.columns, range(0, len(table.columns)))
-        },
-        inplace=True,
-    )
+    unmatched_tables_count = 3
     try:
-        for row_name, var_name in row_names_map.items():
-            try:
-                for col in [0, 4]:
-                    find_row_for_variable(
-                        table, values, col, row_name, var_name
-                    )
-            except Exception as e:
-                print(f"Error processing row '{row_name}': {e}")
+        for map_key, mapping in table_names_map.items():
+            if tables.get(map_key) is not None:
+                unmatched_tables_count -= 1
+                for row_name, var_name in mapping.items():
+                    try:
+                        find_row_for_variable(
+                            tables[map_key], values, 0, row_name, var_name
+                        )
+                    except Exception as e:
+                        print(f"Error processing row '{row_name}': {e}")
     except Exception as e:
         print(f"Error processing table: {e}")
+    if unmatched_tables_count > 1:
+        raise IncompatibleFormatError(
+            "Report standard format is not compatible with the given mapping"
+        )
 
     return pd.DataFrame.from_dict(values, orient="index", columns=["Value"])
 
@@ -140,7 +144,7 @@ def safe_calc(func, args):
     return func(*args)
 
 
-def calc_financial_ratios(df: DataFrame, calculations: dict) -> DataFrame:
+def calc_financial_ratios(df: DataFrame, calculations: dict) -> pd.Series:
     ratios = {
         ratio_name: (
             safe_calc(func, [df["Value"].get(arg, np.nan) for arg in args])
@@ -148,41 +152,32 @@ def calc_financial_ratios(df: DataFrame, calculations: dict) -> DataFrame:
         for ratio_name, (func, args) in calculations.items()
     }
 
-    return pd.DataFrame(ratios, index=[0])
+    return pd.Series(ratios)
 
 
 def extract_financial_data(
-    report_html_content: str,
+    tables: dict,
     table_names_map: dict,
     calculations: dict,
     jdate: JalaliDate,
     symbol: str,
-) -> DataFrame:
-    values = pd.DataFrame()
-    for name, row_names in table_names_map.items():
-        idx = find_table_index(report_html_content, name)
-        if idx is not None:
-            table = get_first_table_after_index(
-                report_html_content, idx, jdate.year <= 1398
-            )
-            extracted_variables = extract_variables(table, row_names)
-            values = pd.concat(
-                [values, extracted_variables], ignore_index=False
-            )
+) -> pd.Series:
 
-    values.loc["revenue_per_share"] = values.loc["revenue"] / (
-        values.loc["capital"] / 1000
-    )
+    extracted_variables = extract_variables(tables, table_names_map)
+
+    extracted_variables.loc["revenue_per_share"] = extracted_variables.loc[
+        "revenue"
+    ] / (extracted_variables.loc["capital"] / 1000)
 
     price_collection = collect_prices(jdate, symbol)
-    values = pd.concat(
+    extracted_variables = pd.concat(
         [
-            values,
+            extracted_variables,
             pd.DataFrame(price_collection.model_dump(), index=["Value"]).T,
         ]
     )
 
-    return calc_financial_ratios(values, calculations)
+    return calc_financial_ratios(extracted_variables, calculations)
 
 
 def get_price(
