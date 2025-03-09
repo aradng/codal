@@ -39,12 +39,7 @@ from codal.fetcher.schemas import (
     TSETMCSearchIn,
     TSETMCSymbolIn,
 )
-from codal.fetcher.utils import (
-    APIError,
-    eval_formula,
-    is_float,
-    sanitize_persian,
-)
+from codal.fetcher.utils import APIError, eval_formula, is_float
 
 
 class ResponseType(StrEnum):
@@ -400,7 +395,6 @@ class TgjuAPIResource(ConfigurableResource):
 
 
 class TSEMTMCAPIResource(ConfigurableResource):
-    _source_name: str = PrivateAttr(default="source_symbol")
     _search_symbol_url: str = PrivateAttr(
         default="https://cdn.tsetmc.com/api/Instrument"
         "/GetInstrumentSearch/{symbol}"
@@ -438,8 +432,6 @@ class TSEMTMCAPIResource(ConfigurableResource):
 
     async def match_symbol(self, symbol: str, session: aiohttp.ClientSession):
         """Fetches instrument data for a given symbol name"""
-        src_symbol = symbol
-        symbol = sanitize_persian(symbol.strip())
         response_data = await self._fetch_with_retries(
             self._search_symbol_url.format(symbol=symbol), session
         )
@@ -449,18 +441,18 @@ class TSEMTMCAPIResource(ConfigurableResource):
             response_data
         ).instrumentSearch
         matches = [
-            i
-            for i in instruments
-            if sanitize_persian(i.symbol.strip()) == symbol and not i.deleted
+            instrument
+            for instrument in instruments
+            if instrument.symbol == symbol and not instrument.deleted
         ]
+
         if len(matches) == 0:
-            return {self._source_name: src_symbol} | {
+            return {
                 column: None
-                for column in list(TSETMCSymbolIn.model_fields.keys())
+                for column, field_info in TSETMCSymbolIn.model_fields.items()
+                if not field_info.exclude
             }
-        return {
-            self._source_name: src_symbol,
-        } | matches[0].model_dump()
+        return matches[0].model_dump()
 
     async def fetch_symbols(self, symbols: list[str]) -> pd.DataFrame:
         async with aiohttp.ClientSession() as session:
@@ -525,6 +517,7 @@ class TSEMTMCAPIResource(ConfigurableResource):
             df["jdate"] = (
                 df.index.to_series().astype("int64") // 10**9
             ).map(lambda x: jdate.fromtimestamp(x))
+            return df
             df["jdate_next"] = df["jdate"].shift().bfill()
             # just hold end of jmonth data
             df["eom"] = df.apply(

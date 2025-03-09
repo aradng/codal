@@ -105,6 +105,11 @@ class CompanyReportLetter(BaseModel):
             return 12
         raise ValueError(f"could not find timeframe in {self.Title}")
 
+    @field_validator("Symbol", "CompanyName", mode="after")
+    @classmethod
+    def sanitize_persian(cls, v: str) -> str:
+        return sanitize_persian(v)
+
 
 class CompanyReportsIn(BaseModel):
     Total: int
@@ -117,6 +122,11 @@ class IndustryGroupIn(BaseModel):
     Id: int
     Name: str
 
+    @field_validator("Name", mode="after")
+    @classmethod
+    def sanitize_persian(cls, v: str) -> str:
+        return sanitize_persian(v)
+
 
 class CompanyIn(BaseModel):
     symbol: str = Field(validation_alias="sy")
@@ -126,6 +136,11 @@ class CompanyIn(BaseModel):
     company_state: int = Field(validation_alias="st")
     industry_group: int = Field(validation_alias="IG")
     report_type: int = Field(validation_alias="RT")
+
+    @field_validator("symbol", "name", mode="after")
+    @classmethod
+    def sanitize_persian(cls, v: str) -> str:
+        return sanitize_persian(v)
 
 
 class GDPIn(BaseModel):
@@ -153,13 +168,18 @@ class TSETMCSymbolIn(BaseModel):
     instrument_code: str = Field(validation_alias="insCode")
     market_title: str = Field(validation_alias="flowTitle")
     market_type: int = Field(validation_alias="flow")
-    lastDate: int
+    lastDate: int = Field(exclude=True)
 
     @computed_field  # type: ignore[misc]
     @property
     def deleted(self) -> bool:
         # has last date means not deleted
         return self.lastDate == 0
+
+    @field_validator("symbol", "name", "market_title", mode="after")
+    @classmethod
+    def sanitize_persian(cls, v: str) -> str:
+        return sanitize_persian(v)
 
 
 class TSETMCSearchIn(BaseModel):

@@ -19,7 +19,6 @@ class Company(Document):
     id: int
     name: str
     symbol: str
-    source_symbol: str
     industry_group: int
     industry_name: str
     deleted: bool

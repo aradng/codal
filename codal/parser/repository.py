@@ -240,19 +240,16 @@ def get_price(
 
 
 def safe_price_extraction(
-    # file_path: str,
     prices: DataFrame,
     jdate: JalaliDate,
     column: str,
-    date_format: str = "%Y/%m/%d",
+    date_format: str = "%Y-%m-%d",
 ) -> tuple[float, float]:
     """
     Reads a CSV file and retrieves the price for the given date and base year.
     Returns (price, base_price) or (np.nan, np.nan) in case of errors.
     """
     try:
-        # with open(file_path) as f:
-        #     prices = pd.read_csv(f)
         price = get_price(
             prices, jdate, column=column, date_format=date_format
         )
@@ -272,13 +269,13 @@ def collect_prices(
     jdate: JalaliDate, symbol: str, price_dfs: PriceDFs
 ) -> PriceCollection:
     stock_price, base_stock_price = safe_price_extraction(
-        price_dfs.TSETMC_STOCKS, jdate, symbol, "%Y-%m-%d"
+        price_dfs.TSETMC_STOCKS, jdate, sanitize_persian(symbol)
     )
     gold_price, base_gold_price = safe_price_extraction(
         price_dfs.GOLD_PRICES, jdate, "close"
     )
     oil_price, base_oil_price = safe_price_extraction(
-        price_dfs.OIL_PRICES, jdate, "close"
+        price_dfs.OIL_PRICES, jdate, "value"
     )
     usd_price, base_usd_price = safe_price_extraction(
         price_dfs.USD_PRICES, jdate, "close"

@@ -43,16 +43,14 @@ def companies(
     get_industries: pd.DataFrame,
     fetch_tsetmc_filtered_companies: pd.DataFrame,
 ) -> Output[pd.DataFrame]:
-    df = fetch_tsetmc_filtered_companies.copy()
-    df = (
-        df.merge(
-            get_companies[["symbol", "industry_group"]],
-            left_on="source_symbol",
-            right_on="symbol",
-            how="inner",
-        )
-        .drop(columns=["symbol_y"])
-        .rename(columns={"symbol_x": "symbol"})
+    df = fetch_tsetmc_filtered_companies.drop(
+        columns=["market_title", "market_type"]
+    ).copy()
+    df = df.merge(
+        get_companies[["symbol", "industry_group"]],
+        left_on="symbol",
+        right_on="symbol",
+        how="inner",
     )
     df = (
         df.merge(
@@ -138,8 +136,6 @@ async def ata_kek(
                     f"Processing report: {company['path']}"
                     f" for {company['symbol']}"
                 )
-                # d2 = {"name": ["e", "f", "g", "h"], "age": [50, 60, 70, 80]}
-                # ddf = pd.DataFrame(d2)
 
                 jdate = jdate.fromisoformat(company["name"].split(".")[0])
 
@@ -152,12 +148,6 @@ async def ata_kek(
                         OIL_PRICES=fetch_commodity,
                         USD_PRICES=fetch_usd,
                     ),
-                    # PriceDFs(
-                    #     TSETMC_STOCKS=ddf,
-                    #     GOLD_PRICES=ddf,
-                    #     OIL_PRICES=ddf,
-                    #     USD_PRICES=ddf,
-                    # ),
                 )
 
                 try:
@@ -217,7 +207,7 @@ async def ata_kek(
         # result_df = pd.concat(answer)
         result_df = pd.DataFrame(answer)
         logger.info("Successfully concatenated all data.")
-        result_df.to_csv(os.path.join(os.getcwd(), "ata_kek.csv"), mode="a")
+        # result_df.to_csv(os.path.join(os.getcwd(), "ata_kek.csv"), mode="a")
         return Output(result_df, metadata={"records": len(result_df)})
     else:
         logger.warning("No data was processed successfully.")

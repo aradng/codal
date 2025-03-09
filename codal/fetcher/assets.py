@@ -197,8 +197,7 @@ async def fetch_company_reports(
     )
     context.log.info(f"fetch url: {MetadataValue.url(get_url(params))}")
     filtered_reports = filter(
-        lambda x: x.Symbol
-        in fetch_tsetmc_filtered_companies["source_symbol"].values
+        lambda x: x.Symbol in fetch_tsetmc_filtered_companies["symbol"].values
         and x.jdate is not None,
         fetch_reports(params=params),
     )
@@ -247,11 +246,15 @@ async def fetch_company_reports(
 )
 def fetch_gdp(
     ninja_api: APINinjaResource,
-) -> pd.DataFrame:
+) -> Output[pd.DataFrame]:
     """
     historical gdp for iran
     """
-    return ninja_api.fetch_gdp(country="iran")
+    df = ninja_api.fetch_gdp(country="iran")
+    return Output(
+        df,
+        metadata={"records": MetadataValue.int(len(df))},
+    )
 
 
 @asset(
@@ -265,11 +268,17 @@ def fetch_gdp(
     io_manager_key="df",
     metadata={"name": "oil"},
 )
-def fetch_commodity(alpha_vantage_api: AlphaVantaAPIResource) -> pd.DataFrame:
+def fetch_commodity(
+    alpha_vantage_api: AlphaVantaAPIResource,
+) -> Output[pd.DataFrame]:
     """
     historical prices for BRENT CRUDE OIL
     """
-    return alpha_vantage_api.fetch_history(symbol="BRENT")
+    df = alpha_vantage_api.fetch_history(symbol="BRENT")
+    return Output(
+        df,
+        metadata={"records": MetadataValue.int(len(df))},
+    )
 
 
 @asset(
@@ -283,11 +292,15 @@ def fetch_commodity(alpha_vantage_api: AlphaVantaAPIResource) -> pd.DataFrame:
     io_manager_key="df",
     metadata={"name": "usd"},
 )
-def fetch_usd(tgju_api: TgjuAPIResource) -> pd.DataFrame:
+def fetch_usd(tgju_api: TgjuAPIResource) -> Output[pd.DataFrame]:
     """
     historical prices for USD/RIAL
     """
-    return tgju_api.fetch_history(currency="price_dollar_rl")
+    df = tgju_api.fetch_history(currency="price_dollar_rl")
+    return Output(
+        df,
+        metadata={"records": MetadataValue.int(len(df))},
+    )
 
 
 @asset(
@@ -305,9 +318,10 @@ def fetch_gold(tgju_api: TgjuAPIResource) -> Output[pd.DataFrame]:
     """
     historical prices for 18k Gold/RIAL
     """
+    df = tgju_api.fetch_history(currency="geram18")
     return Output(
-        tgju_api.fetch_history(currency="geram18"),
-        metadata={"name": "gold"},
+        df,
+        metadata={"records": MetadataValue.int(len(df))},
     )
 
 
@@ -326,28 +340,44 @@ async def fetch_tsetmc_filtered_companies(
     tsetmc_api: TSEMTMCAPIResource,
     get_companies,
     get_industries,
-) -> pd.DataFrame:
+) -> Output[pd.DataFrame]:
     """
     list of non deleted codal companies listed in tsetmc,
     excluding industry group blacklist
     """
     # for now its a mapping might search on industries
     # if industry indexes change over time
-    excluded_insustries = {
-        2: "اوراق مشارکت و سپرده های بانکی",
-        46: "تجارت عمده فروشی به جز وسایل نقلیه موتور",
-        56: "سرمایه گذاریها",
-        57: "بانکها و موسسات اعتباری",
-        66: "بیمه وصندوق بازنشستگی به جزتامین اجتماعی",
-        67: "فعالیتهای کمکی به نهادهای مالی واسط",
-        61: "حمل و نقل آبی",
-    }
+    excluded_insustries = pd.DataFrame(
+        {
+            2: "اوراق مشارکت و سپرده های بانکی",
+            46: "تجارت عمده فروشی به جز وسایل نقلیه موتور",
+            56: "سرمایه گذاریها",
+            57: "بانکها و موسسات اعتباری",
+            66: "بیمه وصندوق بازنشستگی به جزتامین اجتماعی",
+            67: "فعالیتهای کمکی به نهادهای مالی واسط",
+            61: "حمل و نقل آبی",
+        }.items(),
+        columns=["Id", "Name"],
+    ).set_index("Id")
     # filter symbols with excluded industry groups
     companies = get_companies[
-        ~get_companies["industry_group"].isin(excluded_insustries.keys())
+        ~get_companies["industry_group"].isin(excluded_insustries.index)
     ]
+    excluded_companies = get_companies[
+        get_companies["industry_group"].isin(excluded_insustries.index)
+    ]["symbol"].values
     df = await tsetmc_api.fetch_symbols(companies["symbol"])
-    return df
+    return Output(
+        df,
+        metadata={
+            "records": MetadataValue.int(len(df)),
+            "included_records": MetadataValue.int(len(companies)),
+            "excluded_records": MetadataValue.int(len(excluded_companies)),
+            "excluded_industries": MetadataValue.md(
+                excluded_insustries.to_markdown(),
+            ),
+        },
+    )
 
 
 @asset(
@@ -364,18 +394,23 @@ async def fetch_tsetmc_filtered_companies(
 )
 async def fetch_tsetmc_stocks(
     tsetmc_api: TSEMTMCAPIResource, fetch_tsetmc_filtered_companies
-) -> pd.DataFrame:
+) -> Output[pd.DataFrame]:
     """
     fetch stock price history for filtered companies
     """
-
-    return await tsetmc_api.fetch_stocks(fetch_tsetmc_filtered_companies)
+    df = await tsetmc_api.fetch_stocks(fetch_tsetmc_filtered_companies)
+    return Output(
+        df,
+        metadata={
+            "records": MetadataValue.int(len(df)),
+        },
+    )
 
 
 @asset(automation_condition=AutomationCondition.eager())
 def company_report_summary(
     fetch_company_reports: dict[str, pd.DataFrame],
-):
+) -> Output[pd.DataFrame]:
     """
     Generate a summary of reports, including an image visualization.
     """
