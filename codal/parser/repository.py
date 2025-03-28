@@ -1,87 +1,18 @@
-import logging
-import unicodedata
-from datetime import timedelta
+from datetime import date
 from typing import Any
 
 import numpy as np
 import pandas as pd
-from bs4 import BeautifulSoup
+from dagster import get_dagster_logger
 from fuzzywuzzy import process  # type: ignore[import-untyped]
-from jdatetime import date as JalaliDate
 from pandas.core.frame import DataFrame
 
 from codal.fetcher.utils import sanitize_persian
-from codal.parser.exceptions import IncompatibleFormatError
-from codal.parser.schemas import PriceCollection, PriceDFs
-from codal.settings import settings
-
-logger = logging.getLogger(__name__)
+from codal.parser.schemas import PriceCollection, PriceDFs, Ratios, Report
 
 
-def convert_to_float(value: str | float) -> float | None:
-    if isinstance(value, str):
-        is_negative = False
-        if value.startswith("(") and value.endswith(")"):
-            is_negative = True
-            value = value[1:-1]
-        value = value.replace(",", "")
-        try:
-            value = float(value)
-            return -value if is_negative else value
-        except ValueError:
-            return None
-    return value
-
-
-def normalize_text(text: str) -> str:
-    return unicodedata.normalize("NFKC", text).strip().lower()
-
-
-def find_table_index(report_html_content: str, table_name: str) -> int | None:
-
-    soup = BeautifulSoup(report_html_content, "html.parser")
-
-    target_string = normalize_text(table_name)
-
-    th3 = soup.find_all("h3")
-
-    for i, t in enumerate(th3):
-        if t and t.text:
-            normalized_text = normalize_text(t.text)
-            matched, score = process.extractOne(
-                target_string, [normalized_text]
-            )
-            if score > 96:
-                return i
-    return None
-
-
-def get_first_table_after_index(
-    report_html_content: str, index: int, before98: bool = False
-) -> pd.DataFrame:
-    """
-    Retrieves the first table in the HTML content that follows
-      the <h3> tag at the specified index.
-    """
-
-    soup = BeautifulSoup(report_html_content, "html.parser")
-    th3 = soup.find_all("h3")
-
-    target_h3 = th3[index]
-
-    if before98:
-        table_holder = target_h3.find_next("div", class_="table_holder")
-        tables = table_holder.find_all("table")
-        if len(tables) >= 2:
-            next_table = tables[1]
-        else:
-            next_table = tables[0]
-    else:
-        next_table = target_h3.find_next("table")
-    if not next_table:
-        raise ValueError("No table found after the specified <h3> tag.")
-
-    return pd.read_html(str(next_table))[0]
+class IncompatibleFormatError(Exception):
+    pass
 
 
 def find_row_for_variable(
@@ -107,198 +38,150 @@ def find_row_for_variable(
                 find_row_for_variable(table, values, col, row_name, var_name)
             else:
                 values[var_name] = (
-                    convert_to_float(var) if not matched_row.empty else None
+                    float(var) if not matched_row.empty else np.nan
                 )
         else:
             values[var_name] = None
+        logger = get_dagster_logger()
+        logger.debug(f"values: {values}")
+
+
+# TODO: this can be simplified more since its a single column dataframe now
 
 
 def extract_variables(
     tables: dict[str, DataFrame], table_names_map: dict
-) -> DataFrame:
-    values: dict = {}
-    unmatched_tables_count = 3
-    try:
-        for map_key, mapping in table_names_map.items():
-            if tables.get(map_key) is not None:
-                unmatched_tables_count -= 1
-                for row_name, var_name in mapping.items():
-                    try:
-                        find_row_for_variable(
-                            tables[map_key], values, 0, row_name, var_name
-                        )
-                    except Exception as e:
-                        print(f"Error processing row '{row_name}': {e}")
-    except Exception as e:
-        print(f"Error processing table: {e}")
-    if unmatched_tables_count > 1:
-        raise IncompatibleFormatError(
-            "Report standard format is not compatible with the given mapping"
-        )
-
-    return pd.DataFrame.from_dict(values, orient="index", columns=["Value"])
-
-
-def safe_calc(func, args):
-    if any(pd.isna(arg) for arg in args):
-        return np.nan
-    return func(*args)
-
-
-def calc_financial_ratios(df: DataFrame, calculations: dict) -> pd.Series:
-    ratios = {
-        ratio_name: (
-            safe_calc(func, [df["Value"].get(arg, np.nan) for arg in args])
-        )
-        for ratio_name, (func, args) in calculations.items()
-    }
-
-    return pd.Series(ratios)
-
-
-def extract_financial_data(
-    tables: dict[str, DataFrame],
-    table_names_map: dict,
-    calculations: dict,
-    jdate: JalaliDate,
-    symbol: str,
-    price_collection: DataFrame,
-) -> pd.Series:
-
-    # sanitize persian [arad]
+) -> Report:
+    tables.pop("error", False)
     tables = {
         sanitize_persian(k): v.map(
             lambda x: sanitize_persian(x) if isinstance(x, str) else x
         )
         for k, v in tables.items()
     }
-
-    extracted_variables = extract_variables(tables, table_names_map)
-
-    extracted_variables.loc["revenue_per_share"] = extracted_variables.loc[
-        "revenue"
-    ] / (extracted_variables.loc["capital"] / 1000)
-
-    extracted_variables = pd.concat(
-        [
-            extracted_variables,
-            pd.DataFrame(price_collection.model_dump(), index=["Value"]).T,
-        ]
-    )
-
-    return calc_financial_ratios(extracted_variables, calculations)
-
-
-def get_price(
-    prices: DataFrame,
-    price_date: JalaliDate,
-    column: str,
-    date_format: str = "%Y/%m/%d",
-    max_lookup_attempts: int = 60,
-) -> float:
-    """
-    Generic function to retrieve stock, gold, oil, or USD prices.
-    """
-    price = prices.loc[
-        prices["jdate"] == price_date.strftime(format=date_format)
-    ][column]
-
-    if not price.empty:
-        return (
-            float(price.values[0].replace(",", ""))
-            if isinstance(price.values[0], str)
-            else price.values[0]
-        )
-
-    for i in range(1, max_lookup_attempts + 1):
-
-        # Check previous date (T - i)
-        prev_date = price_date - timedelta(i)
-        price = prices.loc[
-            prices["jdate"] == prev_date.strftime(format=date_format)
-        ][column]
-        if not price.empty:
-            return (
-                float(price.values[0].replace(",", ""))
-                if isinstance(price.values[0], str)
-                else price.values[0]
-            )
-
-        # Check next date (T + i)
-        next_date = price_date + timedelta(i)
-        price = prices.loc[
-            prices["jdate"] == next_date.strftime(format=date_format)
-        ][column]
-        if not price.empty:
-            return (
-                float(price.values[0].replace(",", ""))
-                if isinstance(price.values[0], str)
-                else price.values[0]
-            )
-
-    return np.nan
-
-
-def safe_price_extraction(
-    prices: DataFrame,
-    jdate: JalaliDate,
-    column: str,
-    date_format: str = "%Y-%m-%d",
-) -> tuple[float, float]:
-    """
-    Reads a CSV file and retrieves the price for the given date and base year.
-    Returns (price, base_price) or (np.nan, np.nan) in case of errors.
-    """
+    values: dict = {}
+    logger = get_dagster_logger()
+    unmatched_tables_count = min(len(tables), len(table_names_map))
     try:
-        price = get_price(
-            prices, jdate, column=column, date_format=date_format
-        )
-        base_price = get_price(
-            prices,
-            JalaliDate(settings.BASE_YEAR, 1, 1),
-            column=column,
-            date_format=date_format,
-        )
-        return price, base_price
+        for map_key, mapping in table_names_map.items():
+            if tables.get(map_key) is not None:
+                unmatched_tables_count -= 1
+
+                for row_name, var_name in mapping.items():
+                    try:
+                        find_row_for_variable(
+                            tables[map_key], values, 0, row_name, var_name
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Error finding variable {var_name}"
+                            f" in table {map_key}: {e}"
+                        )
     except Exception as e:
-        logger.warning(f"Error fetching price from xxx: {e}")
-        return np.nan, np.nan
+        logger.error(f"Error extracting variables: {e}")
+        raise e
+    if unmatched_tables_count > 0:
+        raise IncompatibleFormatError(
+            "did not match all tables with the mapping provided\n"
+            f"mappings : {list(table_names_map.keys())}\n"
+            f"tables_headers : {list(tables.keys())}\n"
+            f"table_count: {len(tables)}\n"
+            f"unmatched_count: {unmatched_tables_count}\n"
+        )
+
+    return Report.model_validate(values)
+
+
+# TODO: this can be simplified more since its a single column dataframe now
 
 
 def collect_prices(
-    jdate: JalaliDate, symbol: str, price_dfs: PriceDFs
+    date: date,
+    timeframe: int,
+    symbol: str,
+    price_dfs: PriceDFs,
 ) -> PriceCollection:
-    stock_price, base_stock_price = safe_price_extraction(
-        price_dfs.TSETMC_STOCKS, jdate, sanitize_persian(symbol)
-    )
-    gold_price, base_gold_price = safe_price_extraction(
-        price_dfs.GOLD_PRICES, jdate, "close"
-    )
-    oil_price, base_oil_price = safe_price_extraction(
-        price_dfs.OIL_PRICES, jdate, "value"
-    )
-    usd_price, base_usd_price = safe_price_extraction(
-        price_dfs.USD_PRICES, jdate, "close"
-    )
-
-    try:
-        with open(settings.GDP_CSV_PATH) as f:
-            gdps = pd.read_csv(f)
-        gdp = gdps.loc[
-            gdps["year"] == jdate.togregorian().year - 1, "gdp_ppp"
-        ].values[0]
-    except Exception as e:
-        logger.warning(f"GDP error: {e}")
-        gdp = np.nan
+    date = pd.Timestamp(date)
+    df = {
+        k: {
+            "curr": v["df"].asof(date)[v["col"]],
+            "prev": v["df"].asof(date - pd.Timedelta(days=30 * timeframe))[
+                v["col"]
+            ],
+        }
+        for k, v in {
+            "stock_price": {"df": price_dfs.TSETMC_STOCKS, "col": symbol},
+            "gold_price": {"df": price_dfs.GOLD_PRICES, "col": "close"},
+            "usd_price": {"df": price_dfs.USD_PRICES, "col": "close"},
+            "oil_price": {"df": price_dfs.OIL_PRICES, "col": "value"},
+            "gdp": {"df": price_dfs.GDP, "col": "gdp_ppp"},
+        }.items()
+    }
 
     return PriceCollection(
-        GDP=gdp,
-        price_per_share=stock_price,
-        gold_price=gold_price,
-        oil_price=oil_price,
-        usd_price=usd_price,
-        delta_stock_price=stock_price - base_stock_price,
-        delta_gold_price=gold_price - base_gold_price,
-        delta_oil_price=oil_price - base_oil_price,
-        delta_usd_price=usd_price - base_usd_price,
+        GDP=df["gdp"]["curr"],
+        price_per_share=df["stock_price"]["curr"],
+        gold_price=df["gold_price"]["curr"],
+        oil_price=df["oil_price"]["curr"],
+        usd_price=df["usd_price"]["curr"],
+        delta_stock_price=df["stock_price"]["curr"]
+        - df["stock_price"]["prev"],
+        delta_gold_price=df["gold_price"]["curr"] - df["gold_price"]["prev"],
+        delta_oil_price=df["oil_price"]["curr"] - df["oil_price"]["prev"],
+        delta_usd_price=df["usd_price"]["curr"] - df["usd_price"]["prev"],
+    )
+
+
+def calc_financial_ratios(
+    report: Report, price_collection: PriceCollection
+) -> pd.Series:
+    return pd.Series(
+        Ratios(
+            current_ratio=report.current_assets / report.current_liabilities,
+            quick_ratio=(report.current_assets - report.inventories)
+            / report.current_liabilities,
+            debt_ratio=report.total_liabilities / report.total_assets,
+            current_assets_ratio=report.current_assets / report.total_assets,
+            cash_ratio=(report.cash + report.short_term_investments)
+            / report.current_liabilities,
+            net_profit_margin=report.net_profit / report.revenue,
+            operating_profit_margin=report.operating_income / report.revenue,
+            gross_profit_margin=report.gross_profit / report.revenue,
+            return_on_equity=report.net_profit / report.equity,
+            return_on_assets=report.net_profit / report.total_assets,
+            total_debt_to_equity_ratio=report.total_liabilities
+            / report.equity,
+            current_debt_to_equity_ratio=report.current_liabilities
+            / report.equity,
+            long_term_debt_to_equity_ratio=report.long_term_liabilities
+            / report.equity,
+            debt_to_equity_ratio=report.total_liabilities / report.equity,
+            equity_ratio=report.equity / report.total_assets,
+            total_asset_turnover=report.revenue / report.total_assets,
+            pe_ratio=price_collection.price_per_share
+            / report.earnings_per_share,
+            price_sales_ratio=price_collection.price_per_share
+            / (report.revenue / (report.capital / 1000)),
+            cash_return_on_assets=report.operating_cash_flow
+            / report.total_assets,
+            cash_return_on_equity=report.operating_cash_flow / report.equity,
+            earnings_quality=report.operating_cash_flow / report.net_profit,
+            cash_debt_coverage=report.operating_cash_flow
+            / report.total_liabilities,
+            current_cash_coverage=report.operating_cash_flow
+            / report.current_liabilities,
+            revenue_to_GDP=report.revenue / price_collection.GDP,
+            price_to_gold=price_collection.price_per_share
+            / price_collection.gold_price,
+            price_to_oil=price_collection.price_per_share
+            / price_collection.oil_price,
+            price_to_usd=price_collection.price_per_share
+            / price_collection.usd_price,
+            delta_price_to_delta_gold=price_collection.delta_stock_price
+            / price_collection.delta_gold_price,
+            delta_price_to_delta_oil=price_collection.delta_stock_price
+            / price_collection.delta_oil_price,
+            delta_price_to_delta_usd=price_collection.delta_stock_price
+            / price_collection.delta_usd_price,
+        ).model_dump()
     )

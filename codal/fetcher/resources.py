@@ -600,6 +600,17 @@ class MongoIOManager(ConfigurableIOManager):
             )
             | {"asset_key": context.asset_key.to_user_string()}
         )
+        context.log.debug(
+            (
+                "delete & insert documents in collection "
+                f"{context.asset_key.to_user_string()}"
+            )
+            + (
+                f" with partition key: {context.partition_key}"
+                if context.has_partition_key
+                else ""
+            )
+        )
         df["asset_key"] = context.asset_key.to_user_string()
         if context.has_partition_key:
             df["partition_key"] = context.partition_key

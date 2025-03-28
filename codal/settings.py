@@ -17,7 +17,5 @@ class Settings(BaseSettings):
             f"@{self.MONGO_HOSTNAME}:{self.MONGO_PORT}"
         )
 
-    BASE_YEAR: int = 1390
-
 
 settings = Settings()

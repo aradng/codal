@@ -8,8 +8,9 @@ from dagster import (
 )
 
 start_date = datetime.datetime(2011, 3, 21)
+timeframes = {"3": "quarterly", "6": "semi-annually", "12": "annually"}
 
-timeframe_partition = StaticPartitionsDefinition(["3", "6", "12"])
+timeframe_partition = StaticPartitionsDefinition(list(timeframes.keys()))
 
 company_time_partition = WeeklyPartitionsDefinition(
     name="timewindow", start_date=start_date, end_offset=0
