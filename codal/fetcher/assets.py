@@ -1,5 +1,6 @@
 import asyncio
 import traceback
+from datetime import timedelta
 from itertools import chain
 from urllib.parse import urlencode, urljoin
 
@@ -22,7 +23,7 @@ from dagster import (
 from jdatetime import date as jdate
 from pydantic import BaseModel
 
-from codal.fetcher.partitions import company_timeframe_partition
+from codal.fetcher.partitions import company_multi_partition
 from codal.fetcher.resources import (
     AlphaVantaAPIResource,
     APINinjaResource,
@@ -125,6 +126,7 @@ async def fetch_report_data(
         "year": report.jdate.year,
         "timeframe": report.timeframe,
         "name": report.jdate.isoformat(),
+        "date": report.date,
         "error": False,
     }
     file["path"] = company_report.path(**file)
@@ -165,7 +167,7 @@ async def fetch_report_data(
         backoff=Backoff.EXPONENTIAL,
         jitter=Jitter.PLUS_MINUS,
     ),
-    partitions_def=company_timeframe_partition,
+    partitions_def=company_multi_partition,
     automation_condition=AutomationCondition.eager(),
 )
 async def fetch_company_reports(
@@ -217,7 +219,15 @@ async def fetch_company_reports(
     try:
         data = pd.DataFrame(
             await asyncio.gather(*tasks),
-            columns=["symbol", "year", "timeframe", "name", "path", "error"],
+            columns=[
+                "symbol",
+                "year",
+                "timeframe",
+                "name",
+                "date",
+                "path",
+                "error",
+            ],
         )
     except TimeoutError:
         raise
@@ -251,6 +261,14 @@ def fetch_gdp(
     historical gdp for iran
     """
     df = ninja_api.fetch_gdp(country="iran")
+    df.index = pd.to_datetime(df.index)
+    df = (
+        df.resample("ME")
+        .asfreq()
+        .interpolate(method="linear", limit_direction="both")
+    )
+    df["jdate"] = df.index.map(lambda x: jdate.fromgregorian(date=x))
+    df = df.bfill().ffill()
     return Output(
         df,
         metadata={"records": MetadataValue.int(len(df))},
@@ -399,6 +417,18 @@ async def fetch_tsetmc_stocks(
     fetch stock price history for filtered companies
     """
     df = await tsetmc_api.fetch_stocks(fetch_tsetmc_filtered_companies)
+    df["jdate"] = (df.index.to_series().astype("int64") // 10**9).map(
+        lambda x: jdate.fromtimestamp(x)
+    )
+    df["jdate_next"] = df["jdate"].shift().bfill()
+    df["eom"] = df.apply(
+        lambda x: ((x["jdate"] + timedelta(days=1)).month != x["jdate"].month)
+        or x["jdate"].month != x["jdate_next"].month,
+        axis=1,
+    )
+    df = df.drop(columns=["jdate_next"]).sort_index(ascending=True)
+    # just hold end of jmonth data
+    # df = df[df["eom"]]
     return Output(
         df,
         metadata={

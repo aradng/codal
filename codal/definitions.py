@@ -28,7 +28,10 @@ fetcher_assets = load_assets_from_modules(
 parser_assets = load_assets_from_modules([parser_assets], group_name="parser")
 
 defs = Definitions(
-    assets=[*fetcher_assets, *parser_assets],  # type: ignore
+    assets=[
+        *fetcher_assets,
+        *parser_assets,
+    ],  # type: ignore
     resources={
         "company_report": FileStoreCompanyReport(),
         "codal_api": CodalAPIResource(),
@@ -38,7 +41,7 @@ defs = Definitions(
         "alpha_vantage_api": AlphaVantaAPIResource(
             API_KEY=EnvVar("ALPHA_VANTAGE_API_KEY")
         ),
-        "tsetmc_api": TSEMTMCAPIResource(RETRY_LIMIT=3, INITIAL_RETRY_DELAY=1),
+        "tsetmc_api": TSEMTMCAPIResource(RETRY_LIMIT=3, INITIAL_RETRY_DELAY=5),
         "df": DataFrameIOManager(),
         "mongo": MongoIOManager(
             MONGO_USERNAME=EnvVar("MONGO_USERNAME"),

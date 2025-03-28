@@ -98,6 +98,11 @@ class CompanyReportLetter(BaseModel):
 
     @computed_field  # type: ignore[misc]
     @property
+    def date(self) -> date | None:
+        return self.jdate.togregorian() if self.jdate else None
+
+    @computed_field  # type: ignore[misc]
+    @property
     def timeframe(self) -> int:
         if (match := re.search(r"دوره (\d) ماهه", self.Title)) is not None:
             return int(match.group(1))
@@ -160,6 +165,11 @@ class GDPIn(BaseModel):
         return jdate.fromgregorian(
             date=date(year=self.year + 1, month=1, day=1) - timedelta(days=1)
         )
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def date(self) -> date:
+        return self.jdate.togregorian()
 
 
 class TSETMCSymbolIn(BaseModel):

@@ -3,7 +3,7 @@ import json
 import logging
 import pickle
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from enum import StrEnum, auto
 from functools import reduce
 from io import StringIO
@@ -281,9 +281,6 @@ class CodalReportResource(ConfigurableResource):
                 max=30,
             ),
             stop=tenacity.stop_after_attempt(5),
-            before_sleep=tenacity.before_sleep_log(
-                self._logger, logging.WARNING
-            ),
             reraise=True,
         )
         async def _inner():
@@ -335,11 +332,15 @@ class APINinjaResource(ConfigurableResource):
         return response.json()
 
     def fetch_gdp(self, country: str) -> pd.DataFrame:
-        return pd.DataFrame(
-            [
-                GDPIn.model_validate(gdp).model_dump()
-                for gdp in self._get(self._gdp_api.format(country=country))
-            ]
+        return (
+            pd.DataFrame(
+                [
+                    GDPIn.model_validate(gdp).model_dump()
+                    for gdp in self._get(self._gdp_api.format(country=country))
+                ]
+            )
+            .set_index("date")
+            .sort_index(ascending=True)
         )
 
 
@@ -366,7 +367,9 @@ class AlphaVantaAPIResource(ConfigurableResource):
         df["jdate"] = df["date"].apply(
             lambda x: jdate.fromgregorian(date=date.fromisoformat(x))
         )
-        return df
+        df["value"] = df["value"].astype(float)
+        df["date"] = pd.to_datetime(df["date"])
+        return df.set_index("date").sort_index(ascending=True)
 
 
 class TgjuAPIResource(ConfigurableResource):
@@ -381,17 +384,18 @@ class TgjuAPIResource(ConfigurableResource):
         return response.json()["data"]
 
     def fetch_history(self, currency: str) -> pd.DataFrame:
-        return pd.DataFrame(
+        df = pd.DataFrame(
             {
-                "open": row[0],
-                "low": row[1],
-                "high": row[2],
-                "close": row[3],
-                "date": row[6].replace("/", "-"),
-                "jdate": row[7].replace("/", "-"),
+                "open": float(row[0].replace(",", "")),
+                "low": float(row[1].replace(",", "")),
+                "high": float(row[2].replace(",", "")),
+                "close": float(row[3].replace(",", "")),
+                "date": datetime.strptime(row[6], "%Y/%m/%d"),
+                "jdate": jdatetime.strptime(row[7], "%Y/%m/%d"),
             }
             for row in self._get(self._url.format(currency=currency))
         )
+        return df.set_index("date").sort_index(ascending=True)
 
 
 class TSEMTMCAPIResource(ConfigurableResource):
@@ -404,7 +408,7 @@ class TSEMTMCAPIResource(ConfigurableResource):
         "/GetClosingPriceDailyListCSV/{instrument_code}/{symbol}"
     )
     RETRY_LIMIT: int = 3
-    INITIAL_RETRY_DELAY: int = 1  # Seconds
+    INITIAL_RETRY_DELAY: int = 5  # Seconds
 
     async def _fetch_with_retries(
         self,
@@ -417,7 +421,7 @@ class TSEMTMCAPIResource(ConfigurableResource):
         err = ""
         for attempt in range(self.RETRY_LIMIT + 1):
             try:
-                async with session.get(url) as response:
+                async with session.get(url, timeout=120) as response:
                     response.raise_for_status()
 
                     return await getattr(response, response_type)()
@@ -487,7 +491,7 @@ class TSEMTMCAPIResource(ConfigurableResource):
         df["date"] = df["date"].apply(
             lambda x: datetime.strptime(str(x), "%Y%m%d")
         )
-        df.set_index("date", inplace=True)
+        df = df.set_index("date").sort_index(ascending=True)
         return symbol, df
 
     async def fetch_stocks(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -511,23 +515,10 @@ class TSEMTMCAPIResource(ConfigurableResource):
                         for symbol, sf in await asyncio.gather(*tasks)
                     ]
                 )
-                .T.sort_index(ascending=False)
+                .T.sort_index(ascending=True)
                 .bfill()
             )
-            df["jdate"] = (
-                df.index.to_series().astype("int64") // 10**9
-            ).map(lambda x: jdate.fromtimestamp(x))
             return df
-            df["jdate_next"] = df["jdate"].shift().bfill()
-            # just hold end of jmonth data
-            df["eom"] = df.apply(
-                lambda x: (
-                    (x["jdate"] + timedelta(days=1)).month != x["jdate"].month
-                )
-                or x["jdate"].month != x["jdate_next"].month,
-                axis=1,
-            )
-            return df[df["eom"]].drop(columns=["eom", "jdate_next"])
 
 
 class DataFrameIOManager(ConfigurableIOManager):
@@ -543,20 +534,20 @@ class DataFrameIOManager(ConfigurableIOManager):
             self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def handle_output(self, context: OutputContext, df: pd.DataFrame):
-        self._filename = context.metadata["name"] + ".csv"
+        self._filename = context.metadata["name"] + ".pkl"
         self.check_dir_exists()
-        df.to_csv(str(self.path), mode="w", index=False)
+        df.to_pickle(self.path)
 
     def load_input(self, context: InputContext):
         self._filename = (
             context.upstream_output.metadata.get("name")
             or context.upstream_output.definition_metadata["name"]
-        ) + ".csv"
+        ) + ".pkl"
         self.check_dir_exists()
         if not self.path.exists():
             df = pd.DataFrame(columns=list)
             self.write(df)
-        return pd.read_csv(self.path)
+        return pd.read_pickle(self.path)
 
 
 class MongoIOManager(ConfigurableIOManager):
@@ -594,12 +585,22 @@ class MongoIOManager(ConfigurableIOManager):
                 df[col] = pd.to_datetime(df[col])
             except Exception:
                 pass
+        df.replace(pd.NA, None, inplace=True)
+        df.replace(np.nan, None, inplace=True)
+        df.replace(np.inf, None, inplace=True)
+        df.replace(-np.inf, None, inplace=True)
         collection = self._db[context.metadata["collection"]]
         collection.delete_many(
-            {"partition_key": context.partition_key}
-            if context.has_partition_key
-            else {}
+            (
+                {
+                    "partition_key": context.partition_key,
+                }
+                if context.has_partition_key
+                else {}
+            )
+            | {"asset_key": context.asset_key.to_user_string()}
         )
+        df["asset_key"] = context.asset_key.to_user_string()
         if context.has_partition_key:
             df["partition_key"] = context.partition_key
         collection.insert_many(list(df.T.to_dict().values()), ordered=False)

@@ -7,8 +7,12 @@ from dagster import (
     asset,
 )
 
-from codal.fetcher.partitions import company_timeframe_partition
-from codal.parser.exceptions import IncompatibleFormatError
+from codal.fetcher.partitions import (
+    company_multi_partition,
+)
+from codal.parser.repository import (
+    IncompatibleFormatError,
+)
 
 
 @asset(
@@ -70,22 +74,24 @@ def companies(
 
 
 @asset(
-    partitions_def=company_timeframe_partition,
+    partitions_def=company_multi_partition,
     io_manager_key="mongo",
     metadata={"collection": "Profiles"},
     ins={
         "fetch_company_reports": AssetIn(
             key="fetch_company_reports", input_manager_key="io_manager"
-        ),
-        "fetch_tsetmc_stocks": AssetIn(
-            key="fetch_tsetmc_stocks", input_manager_key="df"
-        ),
-        "fetch_gold": AssetIn(key="fetch_gold", input_manager_key="df"),
-        "fetch_usd": AssetIn(key="fetch_usd", input_manager_key="df"),
-        "fetch_commodity": AssetIn(
-            key="fetch_commodity", input_manager_key="df"
-        ),
-        "get_companies": AssetIn(key="get_companies", input_manager_key="df"),
+        )
+    }
+    | {
+        asset: AssetIn(key=asset, input_manager_key="df")
+        for asset in [
+            "fetch_tsetmc_stocks",
+            "fetch_gdp",
+            "fetch_gold",
+            "fetch_usd",
+            "fetch_commodity",
+            "get_companies",
+        ]
     },
 )
 async def ata_kek(
