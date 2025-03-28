@@ -70,33 +70,33 @@ class Profile(Document):
     jdate: str
     date: datetime
 
-    current_ratio: float
-    quick_ratio: float
-    debt_ratio: float
-    current_assets_ratio: float
-    cash_ratio: float
-    net_profit_margin: float
-    operating_profit_margin: float
-    gross_profit_margin: float
-    return_on_equity: float
-    return_on_assets: float
-    total_debt_to_equity_ratio: float
-    current_debt_to_equity_ratio: float
-    long_term_debt_to_equity_ratio: float
-    debt_to_equity_ratio: float
-    equity_ratio: float
-    total_asset_turnover: float
-    pe_ratio: float
-    price_sales_ratio: float
-    cash_return_on_assets: float
-    cash_return_on_equity: float
-    earnings_quality: float
-    cash_debt_coverage: float
-    current_cash_coverage: float
-    revenue_to_GDP: float
-    price_to_gold: float
-    price_to_oil: float
-    price_to_usd: float
-    delta_price_to_delta_gold: float
-    delta_price_to_delta_oil: float
-    delta_price_to_delta_usd: float
+    current_ratio: float | None
+    quick_ratio: float | None
+    debt_ratio: float | None
+    current_assets_ratio: float | None
+    cash_ratio: float | None
+    net_profit_margin: float | None
+    operating_profit_margin: float | None
+    gross_profit_margin: float | None
+    return_on_equity: float | None
+    return_on_assets: float | None
+    total_debt_to_equity_ratio: float | None
+    current_debt_to_equity_ratio: float | None
+    long_term_debt_to_equity_ratio: float | None
+    debt_to_equity_ratio: float | None
+    equity_ratio: float | None
+    total_asset_turnover: float | None
+    pe_ratio: float | None
+    price_sales_ratio: float | None
+    cash_return_on_assets: float | None
+    cash_return_on_equity: float | None
+    earnings_quality: float | None
+    cash_debt_coverage: float | None
+    current_cash_coverage: float | None
+    revenue_to_GDP: float | None
+    price_to_gold: float | None
+    price_to_oil: float | None
+    price_to_usd: float | None
+    delta_price_to_delta_gold: float | None
+    delta_price_to_delta_oil: float | None
+    delta_price_to_delta_usd: float | None

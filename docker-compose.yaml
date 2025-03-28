@@ -90,8 +90,21 @@ services:
     networks:
       - dagster
 
+  backend:
+    build:
+      dockerfile: Dockerfile.backend
+      context: .
+    command: uvicorn codal.app:app --host 0.0.0.0 --port 8000 --reload
+    working_dir: /app
+    env_file: .env
+    restart: always
+    volumes:
+      - ./codal:/app/codal
+    networks:
+      - dagster
 
 networks:
   dagster:
     driver: bridge
     name: dagster
+    enable_ipv6: true

@@ -28,8 +28,8 @@ app = FastAPI(
     lifespan=lifespan,
     debug=True,
     title="codal",
-    docs_url="/api/docs",
-    openapi_url="/api/openapi.json",
+    docs_url="/api/codal/docs",
+    openapi_url="/api/codal/openapi.json",
 )
 
 app.add_middleware(
@@ -40,7 +40,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(router=router, prefix="/api")
+app.include_router(router=router, prefix="/api/codal")
 
 
 @app.exception_handler(FilterError)

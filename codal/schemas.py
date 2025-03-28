@@ -72,7 +72,7 @@ class Weights(BaseModel):
 
 
 class ProfileIn(PaginatedMixin):
-    industry_group: int | None
+    industry_group: int | None = None
     industry_only: bool
     descending: bool = True
     timeframe: Literal[3, 6, 12]
@@ -159,6 +159,13 @@ class RankOut(BaseModel):
     is_industry: bool
 
     score: float
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def nan_to_none(cls, v: Any) -> Any:
+        if isinstance(v, float) and isnan(v):
+            return None
+        return v
 
 
 class RankOutWithTotal(BaseModel):

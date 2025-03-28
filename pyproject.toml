@@ -30,26 +30,6 @@ ignore-words-list = "nin,astroid,Childs"
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.13"
-httpx = "^0.27.2"
-pandas = "^2.2.3"
-plotly = "^5.24.1"
-dagster = "^1.9.4"
-dagster-webserver = "^1.9.4"
-requests = "^2.32.3"
-pymongo = "^4.10.1"
-jdatetime = "^5.0.0"
-aiohttp = "^3.11.11"
-openpyxl = "^3.1.5"
-fastapi = "^0.115.7"
-beautifulsoup4 = "4.12.3"
-numpy = "2.2.0"
-fuzzywuzzy = "0.18.0"
-lxml = "5.3.0"
-python-levenshtein = "^0.26.1"
-pydantic-settings = "^2.7.1"
-beanie = "^1.29.0"
-dagster-docker = "^0.26.2"
-matplotlib = "^3.10.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^24.10.0"
@@ -62,6 +42,30 @@ pyupgrade = "^3.19.0"
 codespell = "^2.3.0"
 ipykernel = "^6.29.5"
 pre-commit = "^4.0.1"
+
+[tool.poetry.group.dagster.dependencies]
+pandas = "^2.2.3"
+dagster = "^1.9.4"
+dagster-webserver = "^1.9.4"
+requests = "^2.32.3"
+pymongo = "^4.10.1"
+jdatetime = "^5.0.0"
+aiohttp = "^3.11.11"
+beautifulsoup4 = "4.12.3"
+numpy = "2.2.0"
+fuzzywuzzy = "0.18.0"
+dagster-docker = "^0.26.2"
+matplotlib = "^3.10.0"
+tenacity = "^9.0.0"
+pyarrow = "^19.0.1"
+scipy = "^1.15.2"
+
+[tool.poetry.group.backend.dependencies]
+fastapi = "^0.115.11"
+beanie = "^1.29.0"
+pydantic = "^2.8.0"
+pydantic-settings = "^2.7.1"
+uvicorn = "^0.34.0"
 
 [build-system]
 requires = ["poetry-core"]
