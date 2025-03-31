@@ -6,15 +6,15 @@ from pydantic import BaseModel, field_validator
 
 
 class PriceCollection(BaseModel):
-    GDP: np.float64
-    price_per_share: np.float64
-    gold_price: np.float64
-    oil_price: np.float64
-    usd_price: np.float64
-    delta_stock_price: np.float64
-    delta_gold_price: np.float64
-    delta_oil_price: np.float64
-    delta_usd_price: np.float64
+    GDP: np.float64 = np.float64(np.nan)
+    price_per_share: np.float64 = np.float64(np.nan)
+    gold_price: np.float64 = np.float64(np.nan)
+    oil_price: np.float64 = np.float64(np.nan)
+    usd_price: np.float64 = np.float64(np.nan)
+    delta_stock_price: np.float64 = np.float64(np.nan)
+    delta_gold_price: np.float64 = np.float64(np.nan)
+    delta_oil_price: np.float64 = np.float64(np.nan)
+    delta_usd_price: np.float64 = np.float64(np.nan)
 
     @field_validator("*", mode="before")
     @classmethod
@@ -22,7 +22,7 @@ class PriceCollection(BaseModel):
         try:
             return np.float64(value)
         except Exception:
-            return np.nan
+            return np.float64(np.nan)
 
     class Config:
         arbitrary_types_allowed = True
@@ -40,33 +40,33 @@ class PriceDFs(BaseModel):
 
 
 class Report(BaseModel):
-    net_profit: np.float64 = np.nan
-    gross_profit: np.float64 = np.nan
-    operating_income: np.float64 = np.nan
-    earnings_per_share: np.float64 = np.nan
-    revenue: np.float64 = np.nan
-    cost_of_revenue: np.float64 = np.nan
+    net_profit: np.float64 = np.float64(np.nan)
+    gross_profit: np.float64 = np.float64(np.nan)
+    operating_income: np.float64 = np.float64(np.nan)
+    earnings_per_share: np.float64 = np.float64(np.nan)
+    revenue: np.float64 = np.float64(np.nan)
+    cost_of_revenue: np.float64 = np.float64(np.nan)
 
-    non_current_assets: np.float64 = np.nan
-    current_assets: np.float64 = np.nan
-    total_assets: np.float64 = np.nan
-    long_term_liabilities: np.float64 = np.nan
-    current_liabilities: np.float64 = np.nan
-    total_liabilities: np.float64 = np.nan
-    equity: np.float64 = np.nan
-    total_liabilities_and_equity: np.float64 = np.nan
-    capital: np.float64 = np.nan
-    cash: np.float64 = np.nan
-    short_term_investments: np.float64 = np.nan
-    long_term_investments: np.float64 = np.nan
-    inventories: np.float64 = np.nan
+    non_current_assets: np.float64 = np.float64(np.nan)
+    current_assets: np.float64 = np.float64(np.nan)
+    total_assets: np.float64 = np.float64(np.nan)
+    long_term_liabilities: np.float64 = np.float64(np.nan)
+    current_liabilities: np.float64 = np.float64(np.nan)
+    total_liabilities: np.float64 = np.float64(np.nan)
+    equity: np.float64 = np.float64(np.nan)
+    total_liabilities_and_equity: np.float64 = np.float64(np.nan)
+    capital: np.float64 = np.float64(np.nan)
+    cash: np.float64 = np.float64(np.nan)
+    short_term_investments: np.float64 = np.float64(np.nan)
+    long_term_investments: np.float64 = np.float64(np.nan)
+    inventories: np.float64 = np.float64(np.nan)
 
-    operating_cash_flow: np.float64 = np.nan
-    cash_taxes_paid: np.float64 = np.nan
-    # net_cash_flow_operating: np.float64 = np.nan
-    net_cash_flow_investing: np.float64 = np.nan
-    net_cash_flow_financing: np.float64 = np.nan
-    net_increase_decrease_cash: np.float64 = np.nan
+    operating_cash_flow: np.float64 = np.float64(np.nan)
+    cash_taxes_paid: np.float64 = np.float64(np.nan)
+    net_cash_flow_operating: np.float64 = np.float64(np.nan)
+    net_cash_flow_investing: np.float64 = np.float64(np.nan)
+    net_cash_flow_financing: np.float64 = np.float64(np.nan)
+    net_increase_decrease_cash: np.float64 = np.float64(np.nan)
 
     @field_validator("*", mode="before")
     @classmethod
@@ -74,10 +74,14 @@ class Report(BaseModel):
         try:
             return np.float64(value)
         except Exception:
-            return np.nan
+            return np.float64(np.nan)
 
     class Config:
         arbitrary_types_allowed = True
+
+
+class FullReport(Report, PriceCollection):  # type: ignore[misc]
+    pass
 
 
 class Ratios(BaseModel):
@@ -112,13 +116,18 @@ class Ratios(BaseModel):
     delta_price_to_delta_oil: np.float64
     delta_price_to_delta_usd: np.float64
 
+    net_cash_flow_operating: np.float64
+    net_cash_flow_investing: np.float64
+    net_cash_flow_financing: np.float64
+    net_increase_decrease_cash: np.float64
+
     @field_validator("*", mode="before")
     @classmethod
     def float_to_np(cls, value: Any) -> np.float64:
         try:
             return np.float64(value)
         except Exception:
-            return np.nan
+            return np.float64(np.nan)
 
     class Config:
         arbitrary_types_allowed = True

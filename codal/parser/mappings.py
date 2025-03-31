@@ -76,7 +76,7 @@ table_names_map_b98 = {
             "net_cash_flow_investing"
         ),
         "جریان خالص ورود (خروج) وجه نقد ناشی از فعالیت‌های تأمین مالی": (
-            "net_cash_flow_before_financing"
+            "net_cash_flow_financing"
         ),
         "خالص افزایش (کاهش) در موجودی نقد": "net_increase_decrease_cash",
     },

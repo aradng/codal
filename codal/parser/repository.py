@@ -8,7 +8,13 @@ from fuzzywuzzy import process  # type: ignore[import-untyped]
 from pandas.core.frame import DataFrame
 
 from codal.fetcher.utils import sanitize_persian
-from codal.parser.schemas import PriceCollection, PriceDFs, Ratios, Report
+from codal.parser.schemas import (
+    FullReport,
+    PriceCollection,
+    PriceDFs,
+    Ratios,
+    Report,
+)
 
 
 class IncompatibleFormatError(Exception):
@@ -18,35 +24,19 @@ class IncompatibleFormatError(Exception):
 def find_row_for_variable(
     table: DataFrame,
     values: dict[str, Any],
-    col: int,
     row_name: str,
     var_name: str,
 ):
     try:
-        table_row_names = table.iloc[:, col].astype(str).tolist()
+        table_row_names = table.iloc[:, 0].astype(str).tolist()
     except IndexError:
         return
     matched, score = process.extractOne(row_name, table_row_names)
-
-    if values.get(var_name) is None:
-        if score >= 90:
-            idx = table.iloc[:, col] == matched
-            matched_row: DataFrame = table[idx]
-            var = matched_row.iloc[0, col + 1]
-            if pd.isna(var):
-                table.drop(index=matched_row.index[0], inplace=True)
-                find_row_for_variable(table, values, col, row_name, var_name)
-            else:
-                values[var_name] = (
-                    float(var) if not matched_row.empty else np.nan
-                )
-        else:
-            values[var_name] = None
-        logger = get_dagster_logger()
-        logger.debug(f"values: {values}")
-
-
-# TODO: this can be simplified more since its a single column dataframe now
+    values[var_name] = (
+        (table[table.iloc[:, 0] == matched].iloc[:, 1].dropna().iat[0])
+        if score >= 90
+        else np.nan
+    )
 
 
 def extract_variables(
@@ -62,24 +52,20 @@ def extract_variables(
     values: dict = {}
     logger = get_dagster_logger()
     unmatched_tables_count = min(len(tables), len(table_names_map))
-    try:
-        for map_key, mapping in table_names_map.items():
-            if tables.get(map_key) is not None:
-                unmatched_tables_count -= 1
+    for map_key, mapping in table_names_map.items():
+        if tables.get(map_key) is not None:
+            unmatched_tables_count -= 1
 
-                for row_name, var_name in mapping.items():
-                    try:
-                        find_row_for_variable(
-                            tables[map_key], values, 0, row_name, var_name
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Error finding variable {var_name}"
-                            f" in table {map_key}: {e}"
-                        )
-    except Exception as e:
-        logger.error(f"Error extracting variables: {e}")
-        raise e
+            for row_name, var_name in mapping.items():
+                try:
+                    find_row_for_variable(
+                        tables[map_key], values, row_name, var_name
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"Error finding variable {var_name}"
+                        f" in table {map_key}: {e}"
+                    )
     if unmatched_tables_count > 0:
         raise IncompatibleFormatError(
             "did not match all tables with the mapping provided\n"
@@ -88,11 +74,7 @@ def extract_variables(
             f"table_count: {len(tables)}\n"
             f"unmatched_count: {unmatched_tables_count}\n"
         )
-
     return Report.model_validate(values)
-
-
-# TODO: this can be simplified more since its a single column dataframe now
 
 
 def collect_prices(
@@ -117,24 +99,24 @@ def collect_prices(
             "gdp": {"df": price_dfs.GDP, "col": "gdp_ppp"},
         }.items()
     }
-
-    return PriceCollection(
+    prices = PriceCollection(
         GDP=df["gdp"]["curr"],
         price_per_share=df["stock_price"]["curr"],
         gold_price=df["gold_price"]["curr"],
-        oil_price=df["oil_price"]["curr"],
+        oil_price=df["oil_price"]["curr"] * df["usd_price"]["curr"],
         usd_price=df["usd_price"]["curr"],
         delta_stock_price=df["stock_price"]["curr"]
         - df["stock_price"]["prev"],
         delta_gold_price=df["gold_price"]["curr"] - df["gold_price"]["prev"],
-        delta_oil_price=df["oil_price"]["curr"] - df["oil_price"]["prev"],
+        delta_oil_price=df["oil_price"]["curr"] * df["usd_price"]["curr"]
+        - df["oil_price"]["prev"] * df["usd_price"]["prev"],
         delta_usd_price=df["usd_price"]["curr"] - df["usd_price"]["prev"],
     )
 
+    return PriceCollection.model_validate(prices, from_attributes=True)
 
-def calc_financial_ratios(
-    report: Report, price_collection: PriceCollection
-) -> pd.Series:
+
+def calc_financial_ratios(report: FullReport) -> pd.Series:
     return pd.Series(
         Ratios(
             current_ratio=report.current_assets / report.current_liabilities,
@@ -158,9 +140,8 @@ def calc_financial_ratios(
             debt_to_equity_ratio=report.total_liabilities / report.equity,
             equity_ratio=report.equity / report.total_assets,
             total_asset_turnover=report.revenue / report.total_assets,
-            pe_ratio=price_collection.price_per_share
-            / report.earnings_per_share,
-            price_sales_ratio=price_collection.price_per_share
+            pe_ratio=report.price_per_share / report.earnings_per_share,
+            price_sales_ratio=report.price_per_share
             / (report.revenue / (report.capital / 1000)),
             cash_return_on_assets=report.operating_cash_flow
             / report.total_assets,
@@ -170,18 +151,26 @@ def calc_financial_ratios(
             / report.total_liabilities,
             current_cash_coverage=report.operating_cash_flow
             / report.current_liabilities,
-            revenue_to_GDP=report.revenue / price_collection.GDP,
-            price_to_gold=price_collection.price_per_share
-            / price_collection.gold_price,
-            price_to_oil=price_collection.price_per_share
-            / price_collection.oil_price,
-            price_to_usd=price_collection.price_per_share
-            / price_collection.usd_price,
-            delta_price_to_delta_gold=price_collection.delta_stock_price
-            / price_collection.delta_gold_price,
-            delta_price_to_delta_oil=price_collection.delta_stock_price
-            / price_collection.delta_oil_price,
-            delta_price_to_delta_usd=price_collection.delta_stock_price
-            / price_collection.delta_usd_price,
+            revenue_to_GDP=report.revenue / report.GDP,
+            price_to_gold=report.price_per_share / report.gold_price,
+            price_to_oil=report.price_per_share / report.oil_price,
+            price_to_usd=report.price_per_share / report.usd_price,
+            delta_price_to_delta_gold=report.delta_stock_price
+            / report.delta_gold_price,
+            delta_price_to_delta_oil=report.delta_stock_price
+            / report.delta_oil_price,
+            delta_price_to_delta_usd=report.delta_stock_price
+            / report.delta_usd_price,
+            net_cash_flow_operating=report.net_cash_flow_operating,
+            net_cash_flow_investing=report.net_cash_flow_investing,
+            net_cash_flow_financing=report.net_cash_flow_financing,
+            net_increase_decrease_cash=report.net_increase_decrease_cash,
         ).model_dump()
     )
+
+
+def financial_ratios_of_industries(row: pd.Series) -> pd.Series | None:
+    validated = FullReport.model_validate(row.to_dict())
+    result = calc_financial_ratios(validated)
+    result["industry_group"] = row.name
+    return result
