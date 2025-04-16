@@ -60,6 +60,7 @@ def get_industries(
     """
     df = codal_api.industries
     df.drop_duplicates("Id", keep="last", inplace=True)
+    df["Id"] = df["Id"].astype(int)
     return Output(df, metadata={"records": len(df)})
 
 

@@ -110,7 +110,6 @@ class ProfileOut(BaseModel):
     industry_group: int
 
     timeframe: Literal[3, 6, 12]
-    year: int
     jdate: str
     date: datetime
 

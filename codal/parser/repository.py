@@ -4,8 +4,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from dagster import get_dagster_logger
-from fuzzywuzzy import process  # type: ignore[import-untyped]
 from pandas.core.frame import DataFrame
+from rapidfuzz import process
 
 from codal.fetcher.utils import sanitize_persian
 from codal.parser.schemas import (
@@ -31,7 +31,7 @@ def find_row_for_variable(
         table_row_names = table.iloc[:, 0].astype(str).tolist()
     except IndexError:
         return
-    matched, score = process.extractOne(row_name, table_row_names)
+    matched, score, _ = process.extractOne(row_name, table_row_names)
     values[var_name] = (
         (table[table.iloc[:, 0] == matched].iloc[:, 1].dropna().iat[0])
         if score >= 90
@@ -170,7 +170,4 @@ def calc_financial_ratios(report: FullReport) -> pd.Series:
 
 
 def financial_ratios_of_industries(row: pd.Series) -> pd.Series | None:
-    validated = FullReport.model_validate(row.to_dict())
-    result = calc_financial_ratios(validated)
-    result["industry_group"] = row.name
-    return result
+    return calc_financial_ratios(FullReport.model_validate(row.to_dict()))

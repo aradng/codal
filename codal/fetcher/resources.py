@@ -17,7 +17,6 @@ import pandas as pd
 import requests
 import tenacity
 from bs4 import BeautifulSoup
-from bson.datetime_ms import DatetimeMS
 from dagster import (
     ConfigurableIOManager,
     ConfigurableResource,
@@ -28,8 +27,8 @@ from dagster import (
 from jdatetime import date as jdate
 from jdatetime import datetime as jdatetime
 from pydantic import BaseModel, PrivateAttr
-from pymongo import AsyncMongoClient, MongoClient
-from pymongo.asynchronous.database import AsyncDatabase
+from pymongo import MongoClient
+from pymongo.database import Database
 
 from codal.fetcher.schemas import (
     CompanyIn,
@@ -545,8 +544,7 @@ class DataFrameIOManager(ConfigurableIOManager):
         ) + ".pkl"
         self.check_dir_exists()
         if not self.path.exists():
-            df = pd.DataFrame(columns=list)
-            self.write(df)
+            pd.DataFrame(columns=list()).to_pickle(self.path)
         return pd.read_pickle(self.path)
 
 
@@ -556,8 +554,8 @@ class MongoIOManager(ConfigurableIOManager):
     MONGO_HOSTNAME: str = "localhost"
     MONGO_PORT: str = "27017"
     DB_NAME: str
-    _client: AsyncMongoClient = PrivateAttr()
-    _db: AsyncDatabase = PrivateAttr()
+    _client: MongoClient = PrivateAttr()
+    _db: Database = PrivateAttr()
     _inited: bool = PrivateAttr(False)
 
     def init_db(self):
@@ -570,21 +568,11 @@ class MongoIOManager(ConfigurableIOManager):
         self._db = self._client[self.DB_NAME]
         self._inited = True
 
-    def jdate_to_date(self, x):
-        return DatetimeMS(
-            int((jdatetime.fromisoformat(x).timestamp() - 19603900800) * 1000)
-        )
-
     def handle_output(self, context: OutputContext, df: pd.DataFrame):
         if df.empty:
             return
         if not self._inited:
             self.init_db()
-        for col in filter(lambda x: "date" == x, df.columns):
-            try:
-                df[col] = pd.to_datetime(df[col])
-            except Exception:
-                pass
         df.replace(pd.NA, None, inplace=True)
         df.replace(np.nan, None, inplace=True)
         df.replace(np.inf, None, inplace=True)

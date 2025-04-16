@@ -94,6 +94,7 @@ def companies(
 
 
 @asset(
+    automation_condition=AutomationCondition.eager(),
     partitions_def=company_multi_partition,
     io_manager_key="mongo",
     metadata={"collection": "Profiles"},
@@ -131,7 +132,18 @@ async def profiles(
     timeframe = int(context.partition_key.keys_by_dimension["timeframe"])
 
     for _, company in fetch_company_reports.iterrows():
-        data = pd.read_pickle(rf"{company["path"]}")
+        if company["symbol"] not in fetch_tsetmc_stocks.columns:
+            context.log.warning(
+                f"Company {company['symbol']} not in TSETMC stocks"
+            )
+            continue
+        if not company["path"].exists() and company["error"]:
+            context.log.warning(
+                f"Company {company['symbol']} path does not exist"
+            )
+            continue
+
+        data = pd.read_pickle(company["path"])
         report_jdate = jdate.fromisoformat(company["name"].split(".")[0])
 
         price_collection = collect_prices(
@@ -212,76 +224,57 @@ async def industry_profiles(
             f"{jdate.fromgregorian(date=report_date).isoformat()}"
         )
 
+        data = pd.read_pickle(rf"{company["path"]}")
+        if not data:
+            context.log.warning(
+                f"Empty data for {company['symbol']} at {company['path']}"
+            )
+            continue
         try:
-            data = pd.read_pickle(rf"{company["path"]}")
-            if not data:
-                context.log.warning(
-                    f"Empty data for {company['symbol']} at {company['path']}"
-                )
-                continue
-            try:
-                report = extract_variables(
-                    data,
-                    table_names_map,
-                )
-            except IncompatibleFormatError:
-                report = extract_variables(
-                    data,
-                    table_names_map_b98,
-                )
-
-            industry_group = get_companies.loc[
-                get_companies["symbol"] == company["symbol"],
-                "industry_group",
-            ].iat[0]
-
-            raw_data = pd.Series(
-                report.model_dump()
-                | PriceCollection(
-                    GDP=fetch_gdp.asof(pd.Timestamp(report_date))["gdp_ppp"]
-                ).model_dump()
-                | dict(industry_group=industry_group)
+            report = extract_variables(
+                data,
+                table_names_map,
+            )
+        except IncompatibleFormatError:
+            report = extract_variables(
+                data,
+                table_names_map_b98,
             )
 
-            all_raw_data.append(raw_data)
+        industry_group = get_companies.loc[
+            get_companies["symbol"] == company["symbol"],
+            "industry_group",
+        ].iat[0]
 
-            context.log.info(
-                f"Successfulfy processed report: {company['path']}"
-                f" for {company['symbol']} at"
-                f"{jdate.fromgregorian(date=report_date).isoformat()}"
-            )
+        raw_data = pd.Series(
+            report.model_dump()
+            | PriceCollection(
+                GDP=fetch_gdp.asof(pd.Timestamp(report_date))["gdp_ppp"]
+            ).model_dump()
+            | dict(industry_group=industry_group)
+        )
 
-        except Exception as e:
-            context.log.error(
-                f"Error processing {company['symbol']}"
-                f" at {company['path']}: {e}",
-                exc_info=True,
-            )
-    context.log.info(
-        f"Calculating ratios of reports for timeframe: {timeframe}"
-        f" from {time_window.start} to {time_window.end}"
-    )
+        all_raw_data.append(raw_data)
 
     industry_reports = (
         pd.DataFrame(all_raw_data).groupby(["industry_group"]).sum()
     )
     result_df: pd.DataFrame = industry_reports.apply(
         financial_ratios_of_industries, axis=1
-    )
+    ).reset_index()
     result_df["is_industry"] = True
-    result_df["name"] = result_df["industry_group"].apply(
-        lambda group: (
-            get_industries.loc[get_industries["Id"] == group, "Name"].iat[0]
-        )
+    result_df["name"] = result_df.merge(
+        get_industries[["Id", "Name"]],
+        how="left",
+        left_on="industry_group",
+        right_on="Id",
+    )["Name"]
+    result_df["name"] = result_df["name"].fillna(
+        result_df["industry_group"].astype(int).astype(str)
     )
     result_df["date"] = time_window.end
     result_df["jdate"] = jdate.fromgregorian(date=time_window.end).isoformat()
     result_df["timeframe"] = timeframe
-
-    context.log.info(
-        f"Processed reports for timeframe: {timeframe}"
-        f" from {time_window.start} to {time_window.end}"
-    )
 
     return Output(result_df, metadata={"records": len(result_df)})
 
@@ -289,6 +282,7 @@ async def industry_profiles(
 industry_profiles_assets = [
     asset(
         name=f"industry_profiles_{timeframes[timeframe]}",
+        automation_condition=AutomationCondition.eager(),
         partitions_def=partition_def,
         io_manager_key="mongo",
         metadata={"collection": "Profiles"},

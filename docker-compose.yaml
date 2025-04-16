@@ -1,4 +1,21 @@
-version: "3"
+x-dagster: &dagster
+  build: .
+  env_file: .env
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+    - /tmp/io_manager_storage:/tmp/io_manager_storage
+    - /dagster/history:/opt/dagster/history
+    - /dagster/storage:/opt/dagster/storage
+    - /dagster/schedules:/opt/dagster/schedules
+    - ./dagster.yaml:/opt/dagster/dagster.yaml
+    - ./workspace.yaml:/opt/dagster/workspace.yaml
+    - .:/apps
+  depends_on:
+    - postgres
+    - mongo
+    - code-server
+  restart: always
+
 services:
   postgres:
     image: postgres:latest
@@ -8,8 +25,6 @@ services:
       POSTGRES_DB: $DAGSTER_POSTGRES_DB
     volumes:
       - /data/pgdata:/var/lib/postgresql/data
-    networks:
-      - dagster
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $DAGSTER_POSTGRES_USER -d $DAGSTER_POSTGRES_DB"]
       interval: 10s
@@ -26,69 +41,26 @@ services:
     ports:
       - "${MONGO_PORT:-27017}:27017"
     restart: always
-    networks:
-      - dagster
 
   code-server:
-    build: .
     working_dir: /apps
-    env_file: .env
     environment:
       DAGSTER_CURRENT_IMAGE: codal-code-server
     command: dagster code-server start -h 0.0.0.0 -p 4000 -m codal.definitions --inject-env-vars-from-instance
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /tmp/io_manager_storage:/tmp/io_manager_storage
-      - /dagster/history:/opt/dagster/history
-      - /dagster/storage:/opt/dagster/storage
-      - /dagster/schedules:/opt/dagster/schedules
-      - .:/apps
-    restart: always
+    <<: *dagster
     depends_on:
       - postgres
       - mongo
-    networks:
-      - dagster
 
   dagster-daemon:
-    build: .
     command: dagster-daemon run
-    env_file: .env
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /tmp/io_manager_storage:/tmp/io_manager_storage
-      - /dagster/history:/opt/dagster/history
-      - /dagster/storage:/opt/dagster/storage
-      - /dagster/schedules:/opt/dagster/schedules
-      - ./dagster.yaml:/opt/dagster/dagster.yaml
-      - ./workspace.yaml:/opt/dagster/workspace.yaml
-    restart: always
-    depends_on:
-      - postgres
-      - code-server
-    networks:
-      - dagster
+    <<: *dagster
 
   dagster-webserver:
-    build: .
     command: dagster-webserver -h 0.0.0.0 -p 3000
     ports:
       - "3000:3000"
-    env_file: .env
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /tmp/io_manager_storage:/tmp/io_manager_storage
-      - /dagster/history:/opt/dagster/history
-      - /dagster/storage:/opt/dagster/storage
-      - /dagster/schedules:/opt/dagster/schedules
-      - ./dagster.yaml:/opt/dagster/dagster.yaml
-      - ./workspace.yaml:/opt/dagster/workspace.yaml
-    restart: always
-    depends_on:
-      - postgres
-      - code-server
-    networks:
-      - dagster
+    <<: *dagster
 
   backend:
     build:
@@ -100,11 +72,10 @@ services:
     restart: always
     volumes:
       - ./codal:/app/codal
-    networks:
-      - dagster
 
 networks:
-  dagster:
+  default:
     driver: bridge
     name: dagster
     enable_ipv6: true
+    external: true
