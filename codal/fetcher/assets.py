@@ -366,9 +366,10 @@ async def fetch_tsetmc_filtered_companies(
     """
     # for now its a mapping might search on industries
     # if industry indexes change over time
-    excluded_insustries = pd.DataFrame(
+    excluded_industries = pd.DataFrame(
         {
             2: "اوراق مشارکت و سپرده های بانکی",
+            39: "شرکتهای چند رشته ای صنعتی",
             46: "تجارت عمده فروشی به جز وسایل نقلیه موتور",
             56: "سرمایه گذاریها",
             57: "بانکها و موسسات اعتباری",
@@ -380,10 +381,10 @@ async def fetch_tsetmc_filtered_companies(
     ).set_index("Id")
     # filter symbols with excluded industry groups
     companies = get_companies[
-        ~get_companies["industry_group"].isin(excluded_insustries.index)
+        ~get_companies["industry_group"].isin(excluded_industries.index)
     ]
     excluded_companies = get_companies[
-        get_companies["industry_group"].isin(excluded_insustries.index)
+        get_companies["industry_group"].isin(excluded_industries.index)
     ]["symbol"].values
     df = await tsetmc_api.fetch_symbols(companies["symbol"])
     return Output(
@@ -393,7 +394,7 @@ async def fetch_tsetmc_filtered_companies(
             "included_records": MetadataValue.int(len(companies)),
             "excluded_records": MetadataValue.int(len(excluded_companies)),
             "excluded_industries": MetadataValue.md(
-                excluded_insustries.to_markdown(),
+                excluded_industries.to_markdown(),
             ),
         },
     )

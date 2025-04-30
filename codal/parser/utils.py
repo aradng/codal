@@ -27,3 +27,38 @@ def fetch_chronological_report(
         .sort_index(ascending=True)
         .loc[_from_date:_to_date]
     )
+
+
+def mongo_dedup_reports_pipeline():
+    return [
+        {"$sort": {"date": -1, "partition_key": -1}},
+        {
+            "$group": {
+                "_id": {
+                    "name": "$name",
+                    "date": "$date",
+                    "timeframe": "$timeframe",
+                },
+                "docs": {"$push": "$$ROOT"},
+                "count": {"$sum": 1},
+            }
+        },
+        # {"$match": {"count": {"$gt": 1}}},
+        {
+            "$project": {
+                "docs": {"$slice": ["$docs", 1, {"$size": "$docs"}]},
+                "count": 1,
+            }
+        },
+        {"$unwind": {"path": "$docs"}},
+        {"$replaceRoot": {"newRoot": "$docs"}},
+        {"$set": {"delete": True}},
+        {
+            "$merge": {
+                "into": "Profiles",
+                "on": "_id",
+                "whenMatched": "replace",
+                "whenNotMatched": "discard",
+            }
+        },
+    ]

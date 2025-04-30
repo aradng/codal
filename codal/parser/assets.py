@@ -8,6 +8,7 @@ from dagster import (
     AssetIn,
     AutomationCondition,
     DimensionPartitionMapping,
+    HookContext,
     MultiPartitionKey,
     MultiPartitionMapping,
     Output,
@@ -15,8 +16,10 @@ from dagster import (
     TimeWindow,
     TimeWindowPartitionMapping,
     asset,
+    success_hook,
 )
 from jdatetime import date as jdate
+from pymongo.collection import Collection
 
 from codal.fetcher.partitions import (
     company_multi_partition,
@@ -32,12 +35,15 @@ from codal.parser.repository import (
     financial_ratios_of_industries,
 )
 from codal.parser.schemas import PriceCollection, PriceDFs
-from codal.parser.utils import fetch_chronological_report
+from codal.parser.utils import (
+    fetch_chronological_report,
+    mongo_dedup_reports_pipeline,
+)
 
 
 @asset(
     automation_condition=AutomationCondition.eager(),
-    io_manager_key="mongo",
+    io_manager_key="mongodf",
     metadata={"collection": "Industries"},
     ins={
         "get_industries": AssetIn(key="get_industries", input_manager_key="df")
@@ -50,7 +56,7 @@ def industries(get_industries: pd.DataFrame) -> Output[pd.DataFrame]:
 
 @asset(
     automation_condition=AutomationCondition.eager(),
-    io_manager_key="mongo",
+    io_manager_key="mongodf",
     metadata={"collection": "Companies"},
     ins={
         "get_companies": AssetIn(key="get_companies", input_manager_key="df"),
@@ -96,7 +102,84 @@ def companies(
 @asset(
     automation_condition=AutomationCondition.eager(),
     partitions_def=company_multi_partition,
-    io_manager_key="mongo",
+    io_manager_key="mongodf",
+    metadata={"collection": "Reports"},
+    ins={
+        "fetch_company_reports": AssetIn(
+            key="fetch_company_reports", input_manager_key="io_manager"
+        )
+    }
+    | {
+        asset: AssetIn(key=asset, input_manager_key="df")
+        for asset in [
+            "fetch_tsetmc_stocks",
+            "get_companies",
+        ]
+    },
+)
+async def reports(
+    context: AssetExecutionContext,
+    fetch_company_reports: pd.DataFrame,
+    fetch_tsetmc_stocks: pd.DataFrame,
+    get_companies: pd.DataFrame,
+) -> Output[pd.DataFrame]:
+
+    answer = []
+    assert isinstance(context.partition_key, MultiPartitionKey)
+    assert isinstance(context.partition_time_window, TimeWindow)
+    timeframe = int(context.partition_key.keys_by_dimension["timeframe"])
+
+    for _, company in fetch_company_reports.iterrows():
+        if company["symbol"] not in fetch_tsetmc_stocks.columns:
+            context.log.warning(
+                f"Company {company['symbol']} not in TSETMC stocks"
+            )
+            continue
+        if not company["path"].exists() and company["error"]:
+            context.log.warning(
+                f"Company {company['symbol']} path does not exist"
+            )
+            continue
+
+        data = pd.read_pickle(company["path"])
+        report_jdate = jdate.fromisoformat(company["name"].split(".")[0])
+
+        try:
+            report = extract_variables(
+                data,
+                table_names_map,
+            )
+        except IncompatibleFormatError:
+            report = extract_variables(
+                data,
+                table_names_map_b98,
+            )
+        extracted_data = pd.Series(report.model_dump())
+
+        extracted_data["name"] = company["symbol"]
+        extracted_data["industry_group"] = get_companies.loc[
+            get_companies["symbol"] == company["symbol"],
+            "industry_group",
+        ].iat[0]
+        extracted_data["jdate"] = report_jdate.isoformat()
+        extracted_data["date"] = datetime.combine(
+            report_jdate.togregorian(), datetime.min.time()
+        )
+        extracted_data["timeframe"] = timeframe
+
+        answer.append(extracted_data)
+
+        context.log.info(
+            f"Successfully processed {company['symbol']} - {company["name"]}"
+        )
+    result_df = pd.DataFrame(answer)
+    return Output(result_df, metadata={"records": len(result_df)})
+
+
+@asset(
+    automation_condition=AutomationCondition.eager(),
+    partitions_def=company_multi_partition,
+    io_manager_key="mongodf",
     metadata={"collection": "Profiles"},
     ins={
         "fetch_company_reports": AssetIn(
@@ -191,7 +274,47 @@ async def profiles(
             f"Successfully processed {company['symbol']} - {company["name"]}"
         )
     result_df = pd.DataFrame(answer)
-    return Output(result_df, metadata={"records": len(result_df)})
+    late_published_dates = pd.Series()
+    if not result_df.empty:
+        late_published_dates = result_df[
+            (
+                result_df["date"]
+                > pd.Timestamp(
+                    context.partition_time_window.end
+                ).to_datetime64()
+            )
+            | (
+                result_df["date"]
+                < pd.Timestamp(
+                    context.partition_time_window.start
+                ).to_datetime64()
+            )
+        ]["date"].drop_duplicates()
+    context.log.info(f"Late importpublished dates: {late_published_dates}")
+    return Output(
+        result_df,
+        metadata={
+            "records": len(result_df),
+            "late_published_dates": late_published_dates.to_json(
+                orient="records"
+            ),
+        },
+    )
+
+
+@success_hook(required_resource_keys={"mongo"})
+def deduplicate_reports(
+    context: HookContext,
+) -> int:
+    collection: Collection = context.resources.mongo.db["Profiles"]
+    collection.aggregate(mongo_dedup_reports_pipeline())
+    count = collection.delete_many({"delete": True}).deleted_count
+    context.log.info(f"Deleted {count} duplicate reports")
+    context.log.info(context.op)
+    context.log.info(context.hook_def)
+    context.log.info(context.step_key)
+    context.log.info(context.resources)
+    return count
 
 
 async def industry_profiles(
@@ -284,7 +407,7 @@ industry_profiles_assets = [
         name=f"industry_profiles_{timeframes[timeframe]}",
         automation_condition=AutomationCondition.eager(),
         partitions_def=partition_def,
-        io_manager_key="mongo",
+        io_manager_key="mongodf",
         metadata={"collection": "Profiles"},
         ins={
             asset: AssetIn(key=asset, input_manager_key="df")

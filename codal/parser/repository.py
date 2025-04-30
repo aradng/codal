@@ -100,17 +100,17 @@ def collect_prices(
         }.items()
     }
     prices = PriceCollection(
-        GDP=df["gdp"]["curr"],
+        GDP=df["gdp"]["curr"] * df["usd_price"]["curr"],
         price_per_share=df["stock_price"]["curr"],
         gold_price=df["gold_price"]["curr"],
         oil_price=df["oil_price"]["curr"] * df["usd_price"]["curr"],
         usd_price=df["usd_price"]["curr"],
         delta_stock_price=df["stock_price"]["curr"]
-        - df["stock_price"]["prev"],
-        delta_gold_price=df["gold_price"]["curr"] - df["gold_price"]["prev"],
-        delta_oil_price=df["oil_price"]["curr"] * df["usd_price"]["curr"]
-        - df["oil_price"]["prev"] * df["usd_price"]["prev"],
-        delta_usd_price=df["usd_price"]["curr"] - df["usd_price"]["prev"],
+        / df["stock_price"]["prev"],
+        delta_gold_price=df["gold_price"]["curr"] / df["gold_price"]["prev"],
+        delta_oil_price=(df["oil_price"]["curr"] * df["usd_price"]["curr"])
+        / (df["oil_price"]["prev"] * df["usd_price"]["prev"]),
+        delta_usd_price=df["usd_price"]["curr"] / df["usd_price"]["prev"],
     )
 
     return PriceCollection.model_validate(prices, from_attributes=True)

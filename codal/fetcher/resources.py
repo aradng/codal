@@ -22,6 +22,7 @@ from dagster import (
     ConfigurableResource,
     InputContext,
     OutputContext,
+    ResourceDependency,
     get_dagster_logger,
 )
 from jdatetime import date as jdate
@@ -548,7 +549,7 @@ class DataFrameIOManager(ConfigurableIOManager):
         return pd.read_pickle(self.path)
 
 
-class MongoIOManager(ConfigurableIOManager):
+class MongoResource(ConfigurableResource):
     MONGO_USERNAME: str = "root"
     MONGO_PASSWORD: str = "root"
     MONGO_HOSTNAME: str = "localhost"
@@ -568,16 +569,24 @@ class MongoIOManager(ConfigurableIOManager):
         self._db = self._client[self.DB_NAME]
         self._inited = True
 
+    @property
+    def db(self) -> Database:
+        if not self._inited:
+            self.init_db()
+        return self._db
+
+
+class MongoIOManager(ConfigurableIOManager):
+    client: ResourceDependency[MongoResource]
+
     def handle_output(self, context: OutputContext, df: pd.DataFrame):
         if df.empty:
             return
-        if not self._inited:
-            self.init_db()
         df.replace(pd.NA, None, inplace=True)
         df.replace(np.nan, None, inplace=True)
         df.replace(np.inf, None, inplace=True)
         df.replace(-np.inf, None, inplace=True)
-        collection = self._db[context.metadata["collection"]]
+        collection = self.client.db[context.metadata["collection"]]
         collection.delete_many(
             (
                 {
