@@ -24,12 +24,10 @@ ignore_missing_imports = true
 module = 'requests'
 ignore_missing_imports = true
 
-[tool.codespell]
-skip = '*.json,poetry.lock'
-ignore-words-list = "nin,astroid,Childs"
-
 [tool.poetry.dependencies]
 python = ">=3.12,<3.13"
+scikit-learn = "^1.6.1"
+pandas = "^2.2.3"
 
 [tool.poetry.group.dev.dependencies]
 black = "^24.10.0"
@@ -39,7 +37,6 @@ isort = "^5.13.2"
 pydantic = "^2.8.0"
 ruff = "^0.8.0"
 pyupgrade = "^3.19.0"
-codespell = "^2.3.0"
 ipykernel = "^6.29.5"
 pre-commit = "^4.0.1"
 
@@ -66,6 +63,7 @@ beanie = "^1.29.0"
 pydantic = "^2.8.0"
 pydantic-settings = "^2.7.1"
 uvicorn = "^0.34.0"
+pandas = "^2.2.3"
 
 [build-system]
 requires = ["poetry-core"]

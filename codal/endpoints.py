@@ -1,9 +1,15 @@
-from beanie.operators import Eq
 from fastapi import APIRouter
+from pydantic import TypeAdapter
+from pymongo import DESCENDING
 
 from codal.models import Company, Industry, Profile
-from codal.schemas import ProfileIn, ProfileOut, RankOutWithTotal
-from codal.utils import field_max, normalize_field
+from codal.schemas import ProfileIn, ProfileOut, RankOut, RankOutWithTotal
+from codal.utils import (
+    dagster_fetch_assets,
+    dagster_status_graphql,
+    field_max,
+    normalize_field,
+)
 
 router = APIRouter()
 
@@ -18,21 +24,30 @@ async def get_industries() -> list[Industry]:
     return await Industry.find().to_list()
 
 
-@router.get("/profile/{name}")
-async def get_profile(name: str) -> list[ProfileOut]:
-    return await Profile.find(Profile.name == name).to_list()
+@router.get("/profile/{name}", response_model=list[ProfileOut])
+async def get_profile(name: str):
+    return (
+        await Profile.find(Profile.name == name)
+        .sort((Profile.date, DESCENDING))
+        .to_list()
+    )
 
 
 @router.post("/score")
-async def get_rankings(profile_in: ProfileIn):
+async def get_rankings(profile_in: ProfileIn) -> RankOutWithTotal:
     query = Profile.find()
-    if profile_in.industry_only:
-        query = query.find(Eq(Profile.is_industry, True))
-    if profile_in.industry_group:
+    if profile_in.industry_only is not None:
+        query = query.find(Profile.is_industry == profile_in.industry_only)
+    if profile_in.industry_group is not None:
         query = query.find(Profile.industry_group == profile_in.industry_group)
     if profile_in.timeframe:
         query = query.find(
             Profile.timeframe == profile_in.timeframe,
+        )
+    if profile_in.from_date is not None and profile_in.to_date is not None:
+        query = query.find(
+            Profile.date >= profile_in.from_date,
+            Profile.date <= profile_in.to_date,
         )
     data_max = await field_max(
         query, list(profile_in.weights.model_dump(exclude_none=True).keys())
@@ -63,7 +78,14 @@ async def get_rankings(profile_in: ProfileIn):
     ).to_list()
 
     return RankOutWithTotal(
-        data=data,
+        data=TypeAdapter(list[RankOut]).validate_python(data),
         page=profile_in.offset or 0,
         total=await query.count(),
     )
+
+
+@router.get("/status")
+def get_dagster_status():
+    url = "http://dagster-webserver:3000/graphql"
+    assets = dagster_fetch_assets(url)
+    return dagster_status_graphql(url, assets)

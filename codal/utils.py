@@ -1,3 +1,4 @@
+import requests
 from beanie.odm.queries.find import FindMany
 
 
@@ -55,3 +56,145 @@ def debug_query(
             }
         },
     ]
+
+
+def mongo_unique_reports_pipeline():
+    return [
+        {"$sort": {"date": -1, "partition_key": -1}},
+        {
+            "$group": {
+                "_id": {
+                    "name": "$name",
+                    "date": "$date",
+                    "timeframe": "$timeframe",
+                },
+                "docs": {"$first": "$$ROOT"},
+            }
+        },
+        {"$replaceRoot": {"newRoot": "$docs"}},
+    ]
+
+
+def mongo_fiscal_year_field():
+    return {
+        "$addFields": {
+            "fiscal_year": {
+                "$cond": [
+                    {
+                        "$lt": [
+                            {
+                                "$dateFromParts": {
+                                    "year": {"$year": "$date"},
+                                    "month": 4,
+                                    "day": 5,
+                                }
+                            },
+                            "$date",
+                        ]
+                    },
+                    {"$year": "$date"},
+                    {"$subtract": [{"$year": "$date"}, 1]},
+                ]
+            }
+        }
+    }
+
+
+def mongo_total_revenue_by_year_pipeline():
+    return [
+        mongo_fiscal_year_field(),
+        {"$match": {"revenue": {"$ne": None}}},
+        {
+            "$group": {
+                "_id": {"year": "$fiscal_year"},
+                "industry_revenue": {"$sum": "$revenue"},
+            }
+        },
+        {
+            "$project": {
+                "_id": 0,
+                "year": "$_id.year",
+                "revenue": "$industry_revenue",
+            }
+        },
+        {"$sort": {"year": -1}},
+    ]
+
+
+def dagster_fetch_assets(url):
+    query = """
+    query {
+        assetNodes {
+            assetKey {
+                path
+            }
+        }
+    }
+    """
+    return {
+        "assetKeys": [
+            asset["assetKey"]
+            for asset in requests.post(
+                url,
+                json={
+                    "query": query,
+                },
+            ).json()[
+                "data"
+            ]["assetNodes"]
+        ]
+    }
+
+
+def dagster_status_graphql(url, variables):
+    query = """
+    query AssetGraphLiveQuery($assetKeys: [AssetKeyInput!]!) {
+    assetNodes(assetKeys: $assetKeys, loadMaterializations: true) {
+    id
+    assetKey {
+        path
+    }
+    assetMaterializations(limit: 1) {
+        timestamp
+    }
+    assetChecksOrError {
+        ... on AssetChecks {
+        checks {
+            name
+            canExecuteIndividually
+            executionForLatestMaterialization {
+            status
+            timestamp
+            evaluation {
+                severity
+            }
+            }
+        }
+        }
+    }
+    partitionStats {
+        numMaterialized
+        numMaterializing
+        numPartitions
+        numFailed
+    }
+    }
+    assetsLatestInfo(assetKeys: $assetKeys) {
+    latestRun {
+        endTime
+        status
+    }
+    assetKey {
+        path
+    }
+    }
+    }
+    """
+    return requests.post(
+        url,
+        json={
+            "operationName": "AssetGraphLiveQuery",
+            "query": query,
+            "variables": variables,
+        },
+    ).json()

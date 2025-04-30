@@ -71,3 +71,40 @@ class Profile(Document):
     net_cash_flow_investing: float | None
     net_cash_flow_financing: float | None
     net_increase_decrease_cash: float | None
+
+
+class Report(Document):
+    class Settings:
+        name = "Reports"
+
+    net_profit: float | None
+    gross_profit: float | None
+    operating_income: float | None
+    earnings_per_share: float | None
+    revenue: float | None
+    cost_of_revenue: float | None
+    non_current_assets: float | None
+    current_assets: float | None
+    total_assets: float | None
+    long_term_liabilities: float | None
+    current_liabilities: float | None
+    total_liabilities: float | None
+    equity: float | None
+    total_liabilities_and_equity: float | None
+    capital: float | None
+    cash: float | None
+    short_term_investments: float | None
+    long_term_investments: float | None
+    inventories: float | None
+    operating_cash_flow: float | None
+    cash_taxes_paid: float | None
+    net_cash_flow_operating: float | None
+    net_cash_flow_investing: float | None
+    net_cash_flow_financing: float | None
+    net_increase_decrease_cash: float | None
+
+    name: str
+    industry_group: int
+    jdate: str
+    date: datetime
+    timeframe: Literal[3, 6, 12]

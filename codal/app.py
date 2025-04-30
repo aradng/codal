@@ -6,12 +6,13 @@ from motor.core import AgnosticClient
 from motor.motor_asyncio import AsyncIOMotorClient
 from starlette.middleware.cors import CORSMiddleware
 
-from codal.endpoints import router
-from codal.models import Company, Industry, Profile
+from codal.charts import router as chart_router
+from codal.endpoints import router as main_router
+from codal.models import Company, Industry, Profile, Report
 from codal.schemas import FilterError
 from codal.settings import settings
 
-models = [Company, Industry, Profile]
+models = [Company, Industry, Profile, Report]
 
 
 async def lifespan(app: FastAPI):
@@ -40,11 +41,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(router=router, prefix="/api/codal")
+app.include_router(router=main_router, prefix="/api/codal")
+app.include_router(router=chart_router, prefix="/api/codal/charts")
 
 
 @app.exception_handler(FilterError)
 async def exception_handler(
     request: Request, exc: FilterError
 ) -> HTTPException:
-    return HTTPException(status_code=exc.status_code, detail=exc.message)
+    raise HTTPException(status_code=exc.status_code, detail=exc.message)
