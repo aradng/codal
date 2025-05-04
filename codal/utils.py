@@ -78,24 +78,7 @@ def mongo_unique_reports_pipeline():
 def mongo_fiscal_year_field():
     return {
         "$addFields": {
-            "fiscal_year": {
-                "$cond": [
-                    {
-                        "$lt": [
-                            {
-                                "$dateFromParts": {
-                                    "year": {"$year": "$date"},
-                                    "month": 4,
-                                    "day": 5,
-                                }
-                            },
-                            "$date",
-                        ]
-                    },
-                    {"$year": "$date"},
-                    {"$subtract": [{"$year": "$date"}, 1]},
-                ]
-            }
+            "fiscal_year": {"$toInt": {"$substr": ["$jdate", 0, 4]}}
         }
     }
 

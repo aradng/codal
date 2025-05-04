@@ -1,6 +1,6 @@
+from beanie import SortDirection
 from fastapi import APIRouter
 from pydantic import TypeAdapter
-from pymongo import DESCENDING
 
 from codal.models import Company, Industry, Profile
 from codal.schemas import ProfileIn, ProfileOut, RankOut, RankOutWithTotal
@@ -28,7 +28,7 @@ async def get_industries() -> list[Industry]:
 async def get_profile(name: str):
     return (
         await Profile.find(Profile.name == name)
-        .sort((Profile.date, DESCENDING))
+        .sort((Profile.date, SortDirection.DESCENDING))
         .to_list()
     )
 

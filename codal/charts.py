@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from fastapi import APIRouter, HTTPException
 
@@ -19,7 +20,7 @@ async def get_reports(symbol: str, timeframe: int):
     )
 
 
-@router.get("/company_revenue", response_model=dict[str | int, float])
+@router.get("/company_revenue", response_model=dict[str | int, float | None])
 async def get_company_revenue_to_total(symbol: str):
     industry_group = (
         report.industry_group
@@ -54,13 +55,23 @@ async def get_company_revenue_to_total(symbol: str):
         industry_revenue,
         left_on="year",
         right_on="year",
-        how="inner",
+        how="outer",
         suffixes=("_company", "_industry"),
     ).set_index("year")
-    return (df["revenue_company"] / df["revenue_industry"] * 100).to_dict()
+    df = (
+        df.loc[first_valid:]
+        if (first_valid := df.dropna(how="any").first_valid_index())
+        is not None
+        else df
+    )
+    return (
+        (df["revenue_company"] / df["revenue_industry"])
+        .replace(np.nan, None)
+        .to_dict()
+    )
 
 
-@router.get("/industry_revenue", response_model=dict[str | int, float])
+@router.get("/industry_revenue", response_model=dict[str | int, float | None])
 async def get_industry_revenue_to_total(industry_group: int):
     industry_revenue = pd.DataFrame(
         await Report.find(
@@ -85,7 +96,17 @@ async def get_industry_revenue_to_total(industry_group: int):
         total_revenue,
         left_on="year",
         right_on="year",
-        how="inner",
+        how="outer",
         suffixes=("_industry", "_total"),
     ).set_index("year")
-    return (df["revenue_industry"] / df["revenue_total"] * 100).to_dict()
+    df = (
+        df.loc[first_valid:]
+        if (first_valid := df.dropna(how="any").first_valid_index())
+        is not None
+        else df
+    )
+    return (
+        (df["revenue_industry"] / df["revenue_total"])
+        .replace(np.nan, None)
+        .to_dict()
+    )
