@@ -96,11 +96,11 @@ def collect_prices(
             "gold_price": {"df": price_dfs.GOLD_PRICES, "col": "close"},
             "usd_price": {"df": price_dfs.USD_PRICES, "col": "close"},
             "oil_price": {"df": price_dfs.OIL_PRICES, "col": "value"},
-            "gdp": {"df": price_dfs.GDP, "col": "gdp_ppp"},
+            "gdp": {"df": price_dfs.GDP, "col": "gdp_nominal"},
         }.items()
     }
     prices = PriceCollection(
-        GDP=df["gdp"]["curr"] * df["usd_price"]["curr"],
+        GDP=df["gdp"]["curr"] * df["usd_price"]["curr"] * 1e3,
         price_per_share=df["stock_price"]["curr"],
         gold_price=df["gold_price"]["curr"],
         oil_price=df["oil_price"]["curr"] * df["usd_price"]["curr"],

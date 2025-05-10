@@ -50,7 +50,23 @@ from codal.parser.utils import (
     },
 )
 def industries(get_industries: pd.DataFrame) -> Output[pd.DataFrame]:
+    excluded_industries = pd.DataFrame(
+        {
+            2: "اوراق مشارکت و سپرده های بانکی",
+            39: "شرکتهای چند رشته ای صنعتی",
+            46: "تجارت عمده فروشی به جز وسایل نقلیه موتور",
+            56: "سرمایه گذاریها",
+            57: "بانکها و موسسات اعتباری",
+            66: "بیمه وصندوق بازنشستگی به جزتامین اجتماعی",
+            67: "فعالیتهای کمکی به نهادهای مالی واسط",
+            61: "حمل و نقل آبی",
+        }.items(),
+        columns=["Id", "Name"],
+    ).set_index("Id")
     get_industries.rename(columns={"Id": "_id", "Name": "name"}, inplace=True)
+    get_industries = get_industries[
+        ~get_industries["_id"].isin(excluded_industries.index)
+    ]
     return Output(get_industries, metadata={"records": len(get_industries)})
 
 
@@ -320,6 +336,7 @@ def deduplicate_reports(
 async def industry_profiles(
     context: AssetExecutionContext,
     fetch_gdp: pd.DataFrame,
+    fetch_usd: pd.DataFrame,
     get_companies: pd.DataFrame,
     get_industries: pd.DataFrame,
 ) -> Output[pd.DataFrame]:
@@ -372,7 +389,9 @@ async def industry_profiles(
         raw_data = pd.Series(
             report.model_dump()
             | PriceCollection(
-                GDP=fetch_gdp.asof(pd.Timestamp(report_date))["gdp_ppp"]
+                GDP=fetch_gdp.asof(pd.Timestamp(report_date))["gdp_nominal"]
+                * fetch_usd.asof(pd.Timestamp(report_date))["close"]
+                * 1e3,
             ).model_dump()
             | dict(industry_group=industry_group)
         )
@@ -380,7 +399,14 @@ async def industry_profiles(
         all_raw_data.append(raw_data)
 
     industry_reports = (
-        pd.DataFrame(all_raw_data).groupby(["industry_group"]).sum()
+        pd.DataFrame(all_raw_data)
+        .groupby(["industry_group"])
+        .agg(
+            {
+                col: "sum" if col != "GDP" else "first"
+                for col in pd.DataFrame(all_raw_data).columns
+            }
+        )
     )
     result_df: pd.DataFrame = industry_reports.apply(
         financial_ratios_of_industries, axis=1
@@ -413,6 +439,7 @@ industry_profiles_assets = [
             asset: AssetIn(key=asset, input_manager_key="df")
             for asset in [
                 "fetch_gdp",
+                "fetch_usd",
                 "get_companies",
                 "get_industries",
             ]

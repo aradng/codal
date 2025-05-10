@@ -76,11 +76,7 @@ def mongo_unique_reports_pipeline():
 
 
 def mongo_fiscal_year_field():
-    return {
-        "$addFields": {
-            "fiscal_year": {"$toInt": {"$substr": ["$jdate", 0, 4]}}
-        }
-    }
+    return {"$addFields": {"year": {"$toInt": {"$substr": ["$jdate", 0, 4]}}}}
 
 
 def mongo_total_revenue_by_year_pipeline():
@@ -89,7 +85,7 @@ def mongo_total_revenue_by_year_pipeline():
         {"$match": {"revenue": {"$ne": None}}},
         {
             "$group": {
-                "_id": {"year": "$fiscal_year"},
+                "_id": {"year": "$year"},
                 "industry_revenue": {"$sum": "$revenue"},
             }
         },
@@ -98,6 +94,49 @@ def mongo_total_revenue_by_year_pipeline():
                 "_id": 0,
                 "year": "$_id.year",
                 "revenue": "$industry_revenue",
+            }
+        },
+        {"$sort": {"year": -1}},
+    ]
+
+
+def mongo_field_groupby_pipeline(field: str, groupby_field: str):
+    return [
+        mongo_fiscal_year_field(),
+        {"$match": {field: {"$ne": None}}},
+        {
+            "$group": {
+                "_id": {"year": "$year", groupby_field: f"${groupby_field}"},
+                field: {"$sum": f"${field}"},
+            }
+        },
+        {
+            "$project": {
+                "_id": 0,
+                "year": "$_id.year",
+                groupby_field: f"$_id.{groupby_field}",
+                field: 1,
+            }
+        },
+        {"$sort": {"year": -1}},
+    ]
+
+
+def mongo_total_field_by_year_pipeline(field: str):
+    return [
+        mongo_fiscal_year_field(),
+        {"$match": {field: {"$ne": None}}},
+        {
+            "$group": {
+                "_id": {"year": "$year"},
+                field: {"$sum": f"${field}"},
+            }
+        },
+        {
+            "$project": {
+                "_id": 0,
+                "year": "$_id.year",
+                field: f"${field}",
             }
         },
         {"$sort": {"year": -1}},

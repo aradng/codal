@@ -38,36 +38,36 @@ class PaginatedMixin(BaseModel):
 
 
 class Weights(BaseModel):
-    current_ratio: float | None
-    quick_ratio: float | None
-    debt_ratio: float | None
-    current_assets_ratio: float | None
-    cash_ratio: float | None
-    net_profit_margin: float | None
-    operating_profit_margin: float | None
-    gross_profit_margin: float | None
-    return_on_equity: float | None
-    return_on_assets: float | None
-    total_debt_to_equity_ratio: float | None
-    current_debt_to_equity_ratio: float | None
-    long_term_debt_to_equity_ratio: float | None
-    debt_to_equity_ratio: float | None
-    equity_ratio: float | None
-    total_asset_turnover: float | None
-    pe_ratio: float | None
-    price_sales_ratio: float | None
-    cash_return_on_assets: float | None
-    cash_return_on_equity: float | None
-    earnings_quality: float | None
-    cash_debt_coverage: float | None
-    current_cash_coverage: float | None
-    revenue_to_GDP: float | None
-    price_to_gold: float | None
-    price_to_oil: float | None
-    price_to_usd: float | None
-    delta_price_to_delta_gold: float | None
-    delta_price_to_delta_oil: float | None
-    delta_price_to_delta_usd: float | None
+    current_ratio: float | None = None
+    quick_ratio: float | None = None
+    debt_ratio: float | None = None
+    current_assets_ratio: float | None = None
+    cash_ratio: float | None = None
+    net_profit_margin: float | None = None
+    operating_profit_margin: float | None = None
+    gross_profit_margin: float | None = None
+    return_on_equity: float | None = None
+    return_on_assets: float | None = None
+    total_debt_to_equity_ratio: float | None = None
+    current_debt_to_equity_ratio: float | None = None
+    long_term_debt_to_equity_ratio: float | None = None
+    debt_to_equity_ratio: float | None = None
+    equity_ratio: float | None = None
+    total_asset_turnover: float | None = None
+    pe_ratio: float | None = None
+    price_sales_ratio: float | None = None
+    cash_return_on_assets: float | None = None
+    cash_return_on_equity: float | None = None
+    earnings_quality: float | None = None
+    cash_debt_coverage: float | None = None
+    current_cash_coverage: float | None = None
+    revenue_to_GDP: float | None = None
+    price_to_gold: float | None = None
+    price_to_oil: float | None = None
+    price_to_usd: float | None = None
+    delta_price_to_delta_gold: float | None = None
+    delta_price_to_delta_oil: float | None = None
+    delta_price_to_delta_usd: float | None = None
 
 
 class ProfileIn(PaginatedMixin):
