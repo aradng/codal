@@ -4,6 +4,8 @@ from fastapi import APIRouter, HTTPException
 
 from codal.models import Report
 from codal.utils import (
+    mongo_field_groupby_pipeline,
+    mongo_total_field_by_year_pipeline,
     mongo_total_revenue_by_year_pipeline,
     mongo_unique_reports_pipeline,
 )
@@ -109,4 +111,89 @@ async def get_industry_revenue_to_total(industry_group: int):
         (df["revenue_industry"] / df["revenue_total"])
         .replace(np.nan, None)
         .to_dict()
+    )
+
+
+@router.get("/industry_report", response_model=dict[int, float | None])
+async def get_industry_report_by_field(industry_group: int, field: str):
+    df = pd.DataFrame(
+        await Report.find(
+            Report.timeframe == 12, Report.industry_group == industry_group
+        )
+        .aggregate(
+            mongo_unique_reports_pipeline()
+            + mongo_total_field_by_year_pipeline(field)
+        )
+        .to_list()
+    ).set_index("year")
+    df = (
+        df.loc[first_valid:]
+        if (first_valid := df.dropna(how="any").first_valid_index())
+        is not None
+        else df
+    )
+
+    return df[field].replace(np.nan, None).to_dict()
+
+
+@router.get(
+    "/industry_share",
+    response_model=dict[int, dict[int | str, float | None]],
+)
+async def get_industry_share(field: str):
+    df = pd.DataFrame(
+        await Report.find(Report.timeframe == 12)
+        .aggregate(
+            mongo_unique_reports_pipeline()
+            + mongo_field_groupby_pipeline(field, "industry_group")
+        )
+        .to_list()
+    ).pivot(
+        index="year",
+        columns="industry_group",
+        values=field,
+    )
+    df = (
+        df.loc[first_valid:]
+        if (first_valid := df.dropna(how="any").first_valid_index())
+        is not None
+        else df
+    )
+    return (
+        df
+        # .dropna(thresh=df.shape[1] // 2)
+        .replace(np.nan, None).to_dict(orient="index")
+    )
+
+
+@router.get(
+    "/company_share",
+    response_model=dict[int, dict[int | str, float | None]],
+)
+async def get_company_revenue_share(
+    field: str, industry_group: int | None = None
+):
+    query = Report.find(Report.timeframe == 12)
+    if industry_group is not None:
+        query = query.find(Report.industry_group == industry_group)
+    df = pd.DataFrame(
+        await query.aggregate(
+            mongo_unique_reports_pipeline()
+            + mongo_field_groupby_pipeline(field, "name")
+        ).to_list()
+    ).pivot(
+        index="year",
+        columns="name",
+        values=field,
+    )
+    df = (
+        df.loc[first_valid:]
+        if (first_valid := df.dropna(how="any").first_valid_index())
+        is not None
+        else df
+    )
+    return (
+        df
+        # .dropna(thresh=df.shape[1] // 2)
+        .replace(np.nan, None).to_dict(orient="index")
     )
