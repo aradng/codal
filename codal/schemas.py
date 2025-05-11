@@ -9,6 +9,8 @@ from pydantic import (
     model_validator,
 )
 
+from codal.models import Prediction
+
 
 class FilterError(Exception):
     status_code: int
@@ -125,6 +127,12 @@ class RankOutWithTotal(BaseModel):
     page: int
     total: int
     data: list[RankOut]
+
+
+class PredictionOutWithTotal(BaseModel):
+    page: int
+    total: int
+    data: list[Prediction]
 
 
 class ReportIn(BaseModel):

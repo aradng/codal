@@ -8,11 +8,11 @@ from starlette.middleware.cors import CORSMiddleware
 
 from codal.charts import router as chart_router
 from codal.endpoints import router as main_router
-from codal.models import Company, Industry, Profile, Report
+from codal.models import Company, Industry, Prediction, Profile, Report
 from codal.schemas import FilterError
 from codal.settings import settings
 
-models = [Company, Industry, Profile, Report]
+models = [Company, Industry, Profile, Report, Prediction]
 
 
 async def lifespan(app: FastAPI):

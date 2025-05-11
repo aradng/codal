@@ -73,6 +73,16 @@ class Profile(Document):
     net_increase_decrease_cash: float | None
 
 
+class Prediction(Document):
+    class Settings:
+        name = "Predictions"
+
+    name: str
+    is_industry: bool
+    industry_group: int
+    score: float
+
+
 class Report(Document):
     class Settings:
         name = "Reports"

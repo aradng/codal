@@ -2,8 +2,15 @@ from beanie import SortDirection
 from fastapi import APIRouter
 from pydantic import TypeAdapter
 
-from codal.models import Company, Industry, Profile
-from codal.schemas import ProfileIn, ProfileOut, RankOut, RankOutWithTotal
+from codal.models import Company, Industry, Prediction, Profile
+from codal.schemas import (
+    PaginatedMixin,
+    PredictionOutWithTotal,
+    ProfileIn,
+    ProfileOut,
+    RankOut,
+    RankOutWithTotal,
+)
 from codal.utils import (
     dagster_fetch_assets,
     dagster_status_graphql,
@@ -84,8 +91,55 @@ async def get_rankings(profile_in: ProfileIn) -> RankOutWithTotal:
     )
 
 
+@router.post("/predict")
+async def get_predictions(
+    pagination: PaginatedMixin,
+) -> PredictionOutWithTotal:
+    query = (
+        Prediction.find()
+        .skip(pagination.skip)
+        .limit(
+            pagination.limit,
+        )
+    )
+
+    return PredictionOutWithTotal(
+        data=await query.to_list(),
+        page=pagination.offset or 0,
+        total=await query.count(),
+    )
+
+
 @router.get("/status")
 def get_dagster_status():
     url = "http://dagster-webserver:3000/graphql"
     assets = dagster_fetch_assets(url)
-    return dagster_status_graphql(url, assets)
+
+    return sorted(
+        [
+            {
+                "asset": asset["assetKey"]["path"][-1],
+                "latest_materialization": asset["assetMaterializations"][-1][
+                    "timestamp"
+                ],
+                "status": (
+                    asset["assetChecksOrError"]["checks"][-1][
+                        "executionForLatestMaterialization"
+                    ]
+                    or {"status": None}
+                )["status"],
+                "partitions": (
+                    {
+                        k.lower().replace("num", ""): v
+                        for k, v in asset["partitionStats"].items()
+                    }
+                    if asset["partitionStats"]
+                    else None
+                ),
+            }
+            for asset in dagster_status_graphql(url, assets)["data"][
+                "assetNodes"
+            ]
+        ],
+        key=lambda x: x["asset"],
+    )
