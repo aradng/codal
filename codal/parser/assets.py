@@ -9,6 +9,7 @@ from dagster import (
     AutomationCondition,
     DimensionPartitionMapping,
     HookContext,
+    MetadataValue,
     MultiPartitionKey,
     MultiPartitionMapping,
     Output,
@@ -26,7 +27,17 @@ from codal.fetcher.partitions import (
     report_multi_partition,
     timeframes,
 )
+from codal.fetcher.resources import MongoResource
 from codal.parser.mappings import table_names_map, table_names_map_b98
+from codal.parser.prediction import (
+    IQR_filter,
+    add_lag_features,
+    normalize,
+    plot_feature_importance,
+    plot_tain_test_errors,
+    predict,
+    train_list,
+)
 from codal.parser.repository import (
     IncompatibleFormatError,
     calc_financial_ratios,
@@ -466,3 +477,110 @@ industry_profiles_assets = [
     )(industry_profiles)
     for timeframe, partition_def in report_multi_partition.items()
 ]
+
+
+@asset(
+    deps=[profiles],
+    automation_condition=AutomationCondition.eager(),
+    io_manager_key="mongodf",
+    metadata={"collection": "Predictions"},
+)
+def ranking_predictions(
+    context: AssetExecutionContext, mongo: MongoResource
+) -> Output[pd.DataFrame]:
+    df = pd.DataFrame.from_records(
+        mongo.db["Profiles"]
+        .find({"is_industry": False, "timeframe": 12})
+        .sort("date")
+        .to_list()
+    )
+    context.log.info(f"Fetched {len(df)} records")
+    weight_list = [
+        {
+            "return_on_assets": 1,
+            "gross_profit_margin": 1,
+        },
+        {
+            "return_on_assets": 1,
+            "current_ratio": 1,
+        },
+        {
+            "gross_profit_margin": 7,
+            "net_profit_margin": 10,
+            "total_asset_turnover": 6,
+            "earnings_quality": 3,
+            "current_ratio": 7,
+            "debt_to_equity_ratio": 2,
+        },
+    ]
+    df = df.drop(
+        columns=["_id", "is_industry", "jdate", "partition_key", "asset_key"]
+    )
+    df.set_index("date", inplace=True)
+    df["time"] = df.index
+    df.sort_index(inplace=True)
+    df = df[
+        ~df.duplicated(subset=["name", "time"], keep="last").drop(
+            columns=["time"]
+        )
+    ]
+    df_list = []
+
+    for weights in weight_list:
+        sf = df.copy()
+        for col in weights.keys():
+            sf = IQR_filter(sf, col)
+        sf["score"] = (
+            normalize(sf[weights.keys()]).multiply(weights).sum(axis=1)
+        )
+        df_list.append(sf)
+
+    context.log.info(f"{len(df_list)} dataframes created")
+
+    df_w_lag = []
+    for sf in df_list:
+        sf = add_lag_features(
+            sf,
+            group_col="name",
+            lags=[1, 2, 3],
+            excluded_cols=["time", "date", "industry_group"],
+        )
+        df_w_lag.append(sf)
+    context.log.info(f"added lag features to {len(df_w_lag)} dataframes")
+    context.log.info("Training models")
+    results = train_list(df_w_lag, weight_list)
+    plot_tain_test_errors(results)
+    plot_feature_importance(results)
+    context.log.info("running predictions on best model")
+    predictions = predict(results)
+    from_date = pd.to_datetime(
+        jdate(year=jdate.today().year - 1, month=1, day=1).togregorian(),
+        utc=True,
+    )
+    to_date = pd.to_datetime(
+        jdate(year=jdate.today().year, month=1, day=1).togregorian(), utc=True
+    )
+    predictions = predictions[
+        (predictions.index >= from_date) & (predictions.index < to_date)
+    ].reset_index()
+    result_df = pd.DataFrame(
+        [
+            {
+                "best_iteration": result["model"].best_iteration,
+                "best_score": result["model"].best_score,
+                "samples": len(result["df"].dropna(subset=["target"])),
+                "error_to_std": (
+                    result["model"].best_score / result["df"]["score"].std()
+                ),
+                "weights": result["weights"],
+            }
+            for result in results
+        ]
+    )
+    return Output(
+        predictions,
+        metadata={
+            "records": MetadataValue.int(len(predictions)),
+            "results": MetadataValue.md(result_df.to_markdown()),
+        },
+    )

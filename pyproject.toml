@@ -26,7 +26,6 @@ ignore_missing_imports = true
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.13"
-scikit-learn = "^1.6.1"
 pandas = "^2.2.3"
 
 [tool.poetry.group.dev.dependencies]
@@ -56,6 +55,8 @@ tenacity = "^9.0.0"
 pyarrow = "^19.0.1"
 scipy = "^1.15.2"
 rapidfuzz = "^3.13.0"
+xgboost = "^3.0.1"
+scikit-learn = "^1.6.1"
 
 [tool.poetry.group.backend.dependencies]
 fastapi = "^0.115.11"

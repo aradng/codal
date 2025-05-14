@@ -200,6 +200,7 @@ def dagster_status_graphql(url, variables):
         numPartitions
         numFailed
     }
+    groupName
     }
     assetsLatestInfo(assetKeys: $assetKeys) {
     latestRun {

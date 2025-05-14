@@ -95,18 +95,19 @@ async def get_rankings(profile_in: ProfileIn) -> RankOutWithTotal:
 async def get_predictions(
     pagination: PaginatedMixin,
 ) -> PredictionOutWithTotal:
-    query = (
-        Prediction.find()
-        .skip(pagination.skip)
+    query = Prediction.find().sort(
+        (Prediction.score, SortDirection.DESCENDING)
+    )
+    count = await query.count()
+
+    return PredictionOutWithTotal(
+        data=await query.skip(pagination.skip)
         .limit(
             pagination.limit,
         )
-    )
-
-    return PredictionOutWithTotal(
-        data=await query.to_list(),
+        .to_list(),
         page=pagination.offset or 0,
-        total=await query.count(),
+        total=count,
     )
 
 
@@ -136,6 +137,7 @@ def get_dagster_status():
                     if asset["partitionStats"]
                     else None
                 ),
+                "group": asset["groupName"],
             }
             for asset in dagster_status_graphql(url, assets)["data"][
                 "assetNodes"

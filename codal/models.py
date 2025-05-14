@@ -78,7 +78,6 @@ class Prediction(Document):
         name = "Predictions"
 
     name: str
-    is_industry: bool
     industry_group: int
     score: float
 

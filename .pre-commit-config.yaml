@@ -31,7 +31,7 @@ repos:
       - id: mypy
         additional_dependencies:
           - mypy-extensions==1.0.0
-          - "pydantic==2.9.2"
+          - "pydantic==2.11.4"
           - "returns==0.22.0"
   - repo: https://github.com/python-poetry/poetry
     rev: 2.1.1
