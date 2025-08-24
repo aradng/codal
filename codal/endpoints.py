@@ -13,6 +13,7 @@ from codal.schemas import (
 )
 from codal.utils import (
     dagster_fetch_assets,
+    dagster_metadata_parser,
     dagster_status_graphql,
     field_max,
     normalize_field,
@@ -138,6 +139,9 @@ def get_dagster_status():
                     else None
                 ),
                 "group": asset["groupName"],
+                "metadata": dagster_metadata_parser(
+                    asset["assetMaterializations"][0]["metadataEntries"]
+                ),
             }
             for asset in dagster_status_graphql(url, assets)["data"][
                 "assetNodes"

@@ -1,3 +1,4 @@
+from typing import Any
 import requests
 from beanie.odm.queries.find import FindMany
 
@@ -161,9 +162,7 @@ def dagster_fetch_assets(url):
                 json={
                     "query": query,
                 },
-            ).json()[
-                "data"
-            ]["assetNodes"]
+            ).json()["data"]["assetNodes"]
         ]
     }
 
@@ -172,44 +171,71 @@ def dagster_status_graphql(url, variables):
     query = """
     query AssetGraphLiveQuery($assetKeys: [AssetKeyInput!]!) {
     assetNodes(assetKeys: $assetKeys, loadMaterializations: true) {
-    id
-    assetKey {
+        id
+        assetKey {
         path
-    }
-    assetMaterializations(limit: 1) {
+        }
+        assetMaterializations(limit: 1) {
         timestamp
-    }
-    assetChecksOrError {
+        metadataEntries {
+            label
+            ... on MarkdownMetadataEntry {
+            mdStr
+            label
+            }
+            ... on TextMetadataEntry {
+            label
+            text
+            }
+            ... on PathMetadataEntry {
+            label
+            path
+            }
+            ... on FloatMetadataEntry {
+            floatValue
+            label
+            }
+            ... on IntMetadataEntry {
+            intValue
+            label
+            }
+            ... on UrlMetadataEntry {
+            label
+            url
+            }
+        }
+        }
+        assetChecksOrError {
         ... on AssetChecks {
-        checks {
+            checks {
             name
             canExecuteIndividually
             executionForLatestMaterialization {
-            status
-            timestamp
-            evaluation {
+                status
+                timestamp
+                evaluation {
                 severity
+                }
             }
             }
         }
         }
-    }
-    partitionStats {
+        partitionStats {
         numMaterialized
         numMaterializing
         numPartitions
         numFailed
-    }
-    groupName
+        }
+        groupName
     }
     assetsLatestInfo(assetKeys: $assetKeys) {
-    latestRun {
+        latestRun {
         endTime
         status
-    }
-    assetKey {
+        }
+        assetKey {
         path
-    }
+        }
     }
     }
     """
@@ -221,3 +247,15 @@ def dagster_status_graphql(url, variables):
             "variables": variables,
         },
     ).json()
+
+
+def dagster_metadata_parser(input: list[dict[str, Any]]):
+    result = {}
+    for entry in input:
+        if not entry:
+            continue
+        key = entry.pop("label")
+        value = entry[next(iter(entry))]
+        result[key] = value
+
+    return result
