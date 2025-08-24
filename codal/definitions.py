@@ -53,7 +53,7 @@ defs = Definitions(
         "alpha_vantage_api": AlphaVantaAPIResource(
             API_KEY=EnvVar("ALPHA_VANTAGE_API_KEY")
         ),
-        "tsetmc_api": TSEMTMCAPIResource(RETRY_LIMIT=3, INITIAL_RETRY_DELAY=5),
+        "tsetmc_api": TSEMTMCAPIResource(RETRY_LIMIT=5, INITIAL_RETRY_DELAY=5),
         "df": DataFrameIOManager(),
         "mongodf": MongoIOManager(client=mongo_resource),
         "mongo": mongo_resource,

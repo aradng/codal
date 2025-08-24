@@ -28,7 +28,7 @@ run_launcher:
         - /dagster/history:/opt/dagster/history
         - /dagster/storage:/opt/dagster/storage
         - /dagster/schedules:/opt/dagster/schedules
-        - /home/aradng/codal:/apps
+        - /home/ubuntu/codal:/apps
 
 sensors:
   use_threads: true

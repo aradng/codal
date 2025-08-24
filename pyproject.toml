@@ -5,6 +5,16 @@ description = ""
 authors = ["aradng <aradarang@gmail.com>"]
 readme = "README.md"
 
+#[[tool.poetry.source]]
+#name = "runflare"
+#url = "https://mirror-pypi.runflare.com/simple"
+#priority = "primary"
+
+
+[[tool.poetry.source]]
+name = "PyPI"
+priority = "primary"
+
 [tool.dagster]
 module_name = "codal.definitions"
 code_location_name = "codal"
@@ -41,21 +51,21 @@ pre-commit = "^4.0.1"
 
 [tool.poetry.group.dagster.dependencies]
 pandas = "^2.2.3"
-dagster = "^1.9.4"
-dagster-webserver = "^1.9.4"
+dagster = {version = "^1.9.4", source="pypi"}
+dagster-webserver = {version = "^1.9.4", source= "pypi"}
+dagster-docker = {version= "^0.26.2", source="pypi"}
 requests = "^2.32.3"
 pymongo = "^4.10.1"
 jdatetime = "^5.0.0"
 aiohttp = "^3.11.11"
 beautifulsoup4 = "4.12.3"
 numpy = "2.2.0"
-dagster-docker = "^0.26.2"
 matplotlib = "^3.10.0"
 tenacity = "^9.0.0"
 pyarrow = "^19.0.1"
 scipy = "^1.15.2"
 rapidfuzz = "^3.13.0"
-xgboost = "^3.0.1"
+xgboost = {version= ">=3.0.0", source="pypi"}
 scikit-learn = "^1.6.1"
 
 [tool.poetry.group.backend.dependencies]
