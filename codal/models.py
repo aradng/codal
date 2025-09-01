@@ -4,19 +4,21 @@ from typing import Literal
 from beanie import Document
 
 
+# Mongo document for industry records (id/name) sourced from Codal
 class Industry(Document):
     class Settings:
         name = "Industries"
 
-    id: int
+    id: int  # type: ignore[assignment]
     name: str
 
 
+# Mongo document for companies listed in the market with basic metadata
 class Company(Document):
     class Settings:
         name = "Companies"
 
-    id: int
+    id: int  # type: ignore[assignment]
     name: str
     symbol: str
     industry_group: int
@@ -24,6 +26,7 @@ class Company(Document):
     deleted: bool
 
 
+# Aggregated financial profile per company/industry and timeframe (ratios + macro) # noqa: E501
 class Profile(Document):
     class Settings:
         name = "Profiles"
@@ -73,6 +76,7 @@ class Profile(Document):
     net_increase_decrease_cash: float | None
 
 
+# Model score produced by ranking/prediction pipeline for industries/companies
 class Prediction(Document):
     class Settings:
         name = "Predictions"
@@ -82,6 +86,7 @@ class Prediction(Document):
     score: float
 
 
+# Raw financial statement figures extracted from Codal reports
 class Report(Document):
     class Settings:
         name = "Reports"

@@ -22,16 +22,19 @@ from codal.fetcher.partitions import timeframes
 from codal.parser import assets as parser_assets_module
 from codal.parser.utils import mongo_dedup_reports_pipeline
 
+# Load parser assets for grouping and freshness checks
 parser_assets = load_assets_from_modules(
     [parser_assets_module], group_name="parser"
 )
 
 
+# Auto-generated freshness checks to monitor parser assets
 parser_freshness_checks = build_last_update_freshness_checks(
     assets=parser_assets,  # type: ignore[arg-type]
     lower_bound_delta=timedelta(days=7),
 )
 
+# Sensor that executes parser freshness checks periodically
 parser_freshness_sensor = build_sensor_for_freshness_checks(
     name="parser_freshness_sensor",
     minimum_interval_seconds=60 * 10,
@@ -40,6 +43,7 @@ parser_freshness_sensor = build_sensor_for_freshness_checks(
 )
 
 
+# Job per industry profile asset to backfill when late reports arrive
 profile_late_submit_jobs = {
     asset.key.to_user_string(): define_asset_job(
         f"late_submit_{asset.key.to_user_string().replace("-", "_")}_job",
@@ -49,6 +53,8 @@ profile_late_submit_jobs = {
 }
 
 
+# When profiles materialize with dates outside the partition window,
+# trigger matching industry profile assets for those dates
 @asset_sensor(
     asset_key=AssetKey("profiles"),
     default_status=DefaultSensorStatus.RUNNING,

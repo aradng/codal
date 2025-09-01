@@ -24,16 +24,20 @@ router = APIRouter()
 
 @router.get("/companies")
 async def get_companies() -> list[Company]:
+    """Return all companies."""
     return await Company.find().to_list()
 
 
 @router.get("/industries")
 async def get_industries() -> list[Industry]:
+    """Return all industries."""
     return await Industry.find().to_list()
 
 
 @router.get("/profile/{name}", response_model=list[ProfileOut])
 async def get_profile(name: str):
+    """Return profile history for a given
+    company name ordered by date (desc)."""
     return (
         await Profile.find(Profile.name == name)
         .sort((Profile.date, SortDirection.DESCENDING))
@@ -43,6 +47,7 @@ async def get_profile(name: str):
 
 @router.post("/score")
 async def get_rankings(profile_in: ProfileIn) -> RankOutWithTotal:
+    """Compute weighted scores for profiles with optional filters and pagination."""  # noqa: E501
     query = Profile.find()
     if profile_in.industry_only is not None:
         query = query.find(Profile.is_industry == profile_in.industry_only)
@@ -96,6 +101,7 @@ async def get_rankings(profile_in: ProfileIn) -> RankOutWithTotal:
 async def get_predictions(
     pagination: PaginatedMixin,
 ) -> PredictionOutWithTotal:
+    """Return predictions sorted by score with pagination."""
     query = Prediction.find().sort(
         (Prediction.score, SortDirection.DESCENDING)
     )
@@ -114,6 +120,7 @@ async def get_predictions(
 
 @router.get("/status")
 def get_dagster_status():
+    """Fetch and summarize Dagster asset statuses via GraphQL."""
     url = "http://dagster-webserver:3000/graphql"
     assets = dagster_fetch_assets(url)
 

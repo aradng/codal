@@ -17,10 +17,12 @@ from codal.parser.schemas import (
 )
 
 
+# Raised when a report's table headers don't match the expected mapping
 class IncompatibleFormatError(Exception):
     pass
 
 
+# Fuzzy-match a row name in a table and capture its numeric value into values[var_name] # noqa: E501
 def find_row_for_variable(
     table: DataFrame,
     values: dict[str, Any],
@@ -39,6 +41,7 @@ def find_row_for_variable(
     )
 
 
+# Extract normalized Report fields from raw Codal tables using header mappings
 def extract_variables(
     tables: dict[str, DataFrame], table_names_map: dict
 ) -> Report:
@@ -77,6 +80,7 @@ def extract_variables(
     return Report.model_validate(values)
 
 
+# Build PriceCollection by aligning market/macro series around a report date
 def collect_prices(
     date: date,
     timeframe: int,
@@ -116,6 +120,7 @@ def collect_prices(
     return PriceCollection.model_validate(prices, from_attributes=True)
 
 
+# Compute financial ratios from a FullReport (statement + prices)
 def calc_financial_ratios(report: FullReport) -> pd.Series:
     return pd.Series(
         Ratios(
@@ -169,5 +174,6 @@ def calc_financial_ratios(report: FullReport) -> pd.Series:
     )
 
 
+# Helper to compute ratios for aggregated industry rows
 def financial_ratios_of_industries(row: pd.Series) -> pd.Series | None:
     return calc_financial_ratios(FullReport.model_validate(row.to_dict()))

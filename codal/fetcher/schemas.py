@@ -15,6 +15,7 @@ from pydantic import (
 from codal.fetcher.utils import sanitize_persian
 
 
+# Query parameters for Codal report search API (outgoing request model)
 class CompanyReportOut(BaseModel):
     Symbol: str | None = None
     Audited: bool = True
@@ -45,12 +46,14 @@ class CompanyReportOut(BaseModel):
         return jdate.fromgregorian(date=value).isoformat().replace("-", "/")
 
 
+# Supervision/under-watch metadata included in Codal report listings
 class SuperVision(BaseModel):
     UnderSupervision: int
     AdditionalInfo: str
     Reasons: list
 
 
+# One report listing entry returned by Codal search API with computed fields
 class CompanyReportLetter(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     SuperVision: SuperVision
@@ -116,6 +119,7 @@ class CompanyReportLetter(BaseModel):
         return sanitize_persian(v)
 
 
+# Paginated response envelope for Codal report search API
 class CompanyReportsIn(BaseModel):
     Total: int
     Page: int
@@ -123,6 +127,7 @@ class CompanyReportsIn(BaseModel):
     IsAttacker: bool
 
 
+# Industry group entry fetched from Codal API
 class IndustryGroupIn(BaseModel):
     Id: int
     Name: str
@@ -133,6 +138,7 @@ class IndustryGroupIn(BaseModel):
         return sanitize_persian(v)
 
 
+# Company entry fetched from Codal API (field aliases map Codal keys)
 class CompanyIn(BaseModel):
     symbol: str = Field(validation_alias="sy")
     name: str = Field(validation_alias="n")
@@ -148,6 +154,7 @@ class CompanyIn(BaseModel):
         return sanitize_persian(v)
 
 
+# GDP record from API Ninjas, with derived gregorian/jalali dates
 class GDPIn(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     country: str
@@ -172,6 +179,7 @@ class GDPIn(BaseModel):
         return self.jdate.togregorian()
 
 
+# TSETMC instrument match result with computed deletion flag
 class TSETMCSymbolIn(BaseModel):
     symbol: str = Field(validation_alias="lVal18AFC")
     name: str = Field(validation_alias="lVal30")
@@ -192,5 +200,6 @@ class TSETMCSymbolIn(BaseModel):
         return sanitize_persian(v)
 
 
+# Response envelope for TSETMC instrument search
 class TSETMCSearchIn(BaseModel):
     instrumentSearch: list[TSETMCSymbolIn]

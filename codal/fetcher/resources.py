@@ -42,11 +42,13 @@ from codal.fetcher.schemas import (
 from codal.fetcher.utils import APIError, eval_formula, is_float
 
 
+# Response payload type hint for aiohttp fetch helpers
 class ResponseType(StrEnum):
     json = auto()
     text = auto()
 
 
+# Local file-based store for pickled company report tables by symbol/timeframe/date # noqa: E501
 class FileStoreCompanyReport(ConfigurableResource):
     BASE_DIR: str = "./data/companies"
 
@@ -75,6 +77,7 @@ class FileStoreCompanyReport(ConfigurableResource):
             return pickle.load(f)
 
 
+# Thin wrapper around Codal search APIs to fetch companies, industries and report listings # noqa: E501
 class CodalAPIResource(ConfigurableResource):
     _base_url: str = PrivateAttr(default="https://search.codal.ir/api/search")
     _report_path: str = PrivateAttr(default="/v2/q?")
@@ -140,8 +143,8 @@ class CodalAPIResource(ConfigurableResource):
         )
 
 
+# Fetches and parses Codal HTML report pages into cleaned pandas DataFrames
 class CodalReportResource(ConfigurableResource):
-
     _logger: logging.Logger = PrivateAttr(default_factory=get_dagster_logger)
 
     async def fetch(
@@ -154,7 +157,7 @@ class CodalReportResource(ConfigurableResource):
 
         async with session.get(
             urlunparse(parsed_url),
-            timeout=240,
+            timeout=aiohttp.ClientTimeout(total=240),
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -320,6 +323,7 @@ class CodalReportResource(ConfigurableResource):
             return reduce(self.concat_dict, await asyncio.gather(*tasks), {})
 
 
+# Client for API Ninjas (GDP endpoint) returning a time-indexed DataFrame
 class APINinjaResource(ConfigurableResource):
     API_KEY: str
     _gdp_api: str = PrivateAttr(
@@ -344,6 +348,7 @@ class APINinjaResource(ConfigurableResource):
         )
 
 
+# AlphaVantage client for commodity price history (e.g., Brent) with jalali dates # noqa: E501
 class AlphaVantaAPIResource(ConfigurableResource):
     API_KEY: str
     _url: str = PrivateAttr(
@@ -372,6 +377,7 @@ class AlphaVantaAPIResource(ConfigurableResource):
         return df.set_index("date").sort_index(ascending=True)
 
 
+# TGJU client for IR market indicators (USD, gold) with historical OHLC
 class TgjuAPIResource(ConfigurableResource):
     _url: str = PrivateAttr(
         default="https://api.tgju.org/v1/market/indicator"
@@ -398,6 +404,7 @@ class TgjuAPIResource(ConfigurableResource):
         return df.set_index("date").sort_index(ascending=True)
 
 
+# TSETMC client to resolve instruments and fetch OHLCV, with retry/backoff
 class TSEMTMCAPIResource(ConfigurableResource):
     _search_symbol_url: str = PrivateAttr(
         default="https://cdn.tsetmc.com/api/Instrument"
@@ -421,7 +428,9 @@ class TSEMTMCAPIResource(ConfigurableResource):
         err = ""
         for attempt in range(self.RETRY_LIMIT + 1):
             try:
-                async with session.get(url, timeout=120) as response:
+                async with session.get(
+                    url, timeout=aiohttp.ClientTimeout(total=120)
+                ) as response:
                     response.raise_for_status()
 
                     return await getattr(response, response_type)()
@@ -521,6 +530,7 @@ class TSEMTMCAPIResource(ConfigurableResource):
             return df
 
 
+# Dagster IOManager that pickles pandas DataFrames under ./data/{name}.pkl
 class DataFrameIOManager(ConfigurableIOManager):
     _filename: str = PrivateAttr()
     _base_dir: Path = PrivateAttr(default=Path("./data"))
@@ -534,21 +544,27 @@ class DataFrameIOManager(ConfigurableIOManager):
             self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def handle_output(self, context: OutputContext, df: pd.DataFrame):
-        self._filename = context.metadata["name"] + ".pkl"
+        meta = context.metadata or {}
+        name = meta.get("name") or context.asset_key.path[-1]
+        self._filename = name + ".pkl"
         self.check_dir_exists()
         df.to_pickle(self.path)
 
     def load_input(self, context: InputContext):
-        self._filename = (
-            context.upstream_output.metadata.get("name")
-            or context.upstream_output.definition_metadata["name"]
-        ) + ".pkl"
+        upstream = context.upstream_output
+        meta_name = None
+        if upstream is not None:
+            meta_name = (upstream.metadata or {}).get("name")
+            if meta_name is None:
+                meta_name = upstream.definition_metadata.get("name")
+        self._filename = (meta_name or context.asset_key.path[-1]) + ".pkl"
         self.check_dir_exists()
         if not self.path.exists():
             pd.DataFrame(columns=list()).to_pickle(self.path)
         return pd.read_pickle(self.path)
 
 
+# Lazily-initialized MongoDB client bound to a configured database
 class MongoResource(ConfigurableResource):
     MONGO_USERNAME: str = "root"
     MONGO_PASSWORD: str = "root"
@@ -576,6 +592,7 @@ class MongoResource(ConfigurableResource):
         return self._db
 
 
+# IOManager that writes DataFrames into MongoDB collections (with partition context) # noqa: E501
 class MongoIOManager(ConfigurableIOManager):
     client: ResourceDependency[MongoResource]
 
@@ -586,7 +603,11 @@ class MongoIOManager(ConfigurableIOManager):
         df.replace(np.nan, None, inplace=True)
         df.replace(np.inf, None, inplace=True)
         df.replace(-np.inf, None, inplace=True)
-        collection = self.client.db[context.metadata["collection"]]
+        meta = context.metadata or {}
+        collection_name = meta.get("collection")
+        if not collection_name:
+            return
+        collection = self.client.db[collection_name]
         collection.delete_many(
             (
                 {

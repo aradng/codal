@@ -8,6 +8,7 @@ from jdatetime import date as jdate
 def fetch_chronological_report(
     path: Path, timeframe: int, from_date: date, to_date: date
 ) -> pd.DataFrame:
+    """Return dataframe of available report files between dates, indexed by Gregorian date."""  # noqa: E501
     _from_date = pd.Timestamp(from_date).replace(tzinfo=None)
     _to_date = pd.Timestamp(to_date).replace(tzinfo=None)
     return (
@@ -30,6 +31,7 @@ def fetch_chronological_report(
 
 
 def mongo_dedup_reports_pipeline():
+    """Pipeline to mark older duplicate profile documents for deletion via merge."""  # noqa: E501
     return [
         {"$sort": {"date": -1, "partition_key": -1}},
         {

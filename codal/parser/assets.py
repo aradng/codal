@@ -52,6 +52,7 @@ from codal.parser.utils import (
 )
 
 
+# Materialize filtered industries into MongoDB (excludes finance/banks/etc.)
 @asset(
     automation_condition=AutomationCondition.eager(),
     io_manager_key="mongodf",
@@ -81,6 +82,7 @@ def industries(get_industries: pd.DataFrame) -> Output[pd.DataFrame]:
     return Output(get_industries, metadata={"records": len(get_industries)})
 
 
+# Join companies with TSETMC instruments & industry names; write to MongoDB
 @asset(
     automation_condition=AutomationCondition.eager(),
     io_manager_key="mongodf",
@@ -126,6 +128,7 @@ def companies(
     return Output(df, metadata={"records": len(df)})
 
 
+# Parse fetched company report files into flat financial statement rows
 @asset(
     automation_condition=AutomationCondition.eager(),
     partitions_def=company_multi_partition,
@@ -150,7 +153,6 @@ async def reports(
     fetch_tsetmc_stocks: pd.DataFrame,
     get_companies: pd.DataFrame,
 ) -> Output[pd.DataFrame]:
-
     answer = []
     assert isinstance(context.partition_key, MultiPartitionKey)
     assert isinstance(context.partition_time_window, TimeWindow)
@@ -203,6 +205,7 @@ async def reports(
     return Output(result_df, metadata={"records": len(result_df)})
 
 
+# Build per-company profile with financial ratios + macro/market context
 @asset(
     automation_condition=AutomationCondition.eager(),
     partitions_def=company_multi_partition,
@@ -235,7 +238,6 @@ async def profiles(
     fetch_commodity: pd.DataFrame,
     get_companies: pd.DataFrame,
 ) -> Output[pd.DataFrame]:
-
     answer = []
     assert isinstance(context.partition_key, MultiPartitionKey)
     assert isinstance(context.partition_time_window, TimeWindow)
@@ -344,6 +346,7 @@ def deduplicate_reports(
     return count
 
 
+# Aggregate latest reports into per-industry profiles with ratios
 async def industry_profiles(
     context: AssetExecutionContext,
     fetch_gdp: pd.DataFrame,
@@ -351,7 +354,6 @@ async def industry_profiles(
     get_companies: pd.DataFrame,
     get_industries: pd.DataFrame,
 ) -> Output[pd.DataFrame]:
-
     all_raw_data = []
     assert isinstance(context.partition_key, MultiPartitionKey)
     assert isinstance(context.partition_time_window, TimeWindow)
@@ -368,7 +370,6 @@ async def industry_profiles(
         from_date=time_window.start,
         to_date=time_window.end,
     ).iterrows():
-
         context.log.info(
             f"Processing report: {company['path']}"
             f" for {company['symbol']} at"
@@ -439,6 +440,7 @@ async def industry_profiles(
     return Output(result_df, metadata={"records": len(result_df)})
 
 
+# Factory: three partitioned assets (quarterly/semi/annual) for industry profiles # noqa: E501
 industry_profiles_assets = [
     asset(
         name=f"industry_profiles_{timeframes[timeframe]}",
@@ -479,6 +481,7 @@ industry_profiles_assets = [
 ]
 
 
+# Train XGBoost models on historical profiles and emit latest ranking scores
 @asset(
     deps=[profiles],
     automation_condition=AutomationCondition.eager(),

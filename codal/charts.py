@@ -15,6 +15,7 @@ router = APIRouter()
 
 @router.get("/report", response_model=list[Report])
 async def get_reports(symbol: str, timeframe: int):
+    """Return unique reports for a symbol and timeframe."""
     return (
         await Report.find(Report.name == symbol, Report.timeframe == timeframe)
         .aggregate(mongo_unique_reports_pipeline())  # TODO: fix and remove
@@ -24,6 +25,8 @@ async def get_reports(symbol: str, timeframe: int):
 
 @router.get("/company_revenue", response_model=dict[str | int, float | None])
 async def get_company_revenue_to_total(symbol: str):
+    """Return company's revenue divided by
+    its industry's total revenue by year."""
     industry_group = (
         report.industry_group
         if (report := await Report.find_one(Report.name == symbol)) is not None
@@ -75,6 +78,7 @@ async def get_company_revenue_to_total(symbol: str):
 
 @router.get("/industry_revenue", response_model=dict[str | int, float | None])
 async def get_industry_revenue_to_total(industry_group: int):
+    """Return industry's revenue divided by market total revenue by year."""
     industry_revenue = pd.DataFrame(
         await Report.find(
             Report.timeframe == 12, Report.industry_group == industry_group
@@ -116,6 +120,7 @@ async def get_industry_revenue_to_total(industry_group: int):
 
 @router.get("/industry_report", response_model=dict[int, float | None])
 async def get_industry_report_by_field(industry_group: int, field: str):
+    """Return aggregated yearly sum for a field within an industry group."""
     df = pd.DataFrame(
         await Report.find(
             Report.timeframe == 12, Report.industry_group == industry_group
@@ -141,6 +146,7 @@ async def get_industry_report_by_field(industry_group: int, field: str):
     response_model=dict[int, dict[int | str, float | None]],
 )
 async def get_industry_share(field: str):
+    """Return yearly distribution of a field across industry groups."""
     df = pd.DataFrame(
         await Report.find(Report.timeframe == 12)
         .aggregate(
@@ -173,6 +179,8 @@ async def get_industry_share(field: str):
 async def get_company_revenue_share(
     field: str, industry_group: int | None = None
 ):
+    """Return yearly distribution of a field
+    across companies (optionally within an industry)."""
     query = Report.find(Report.timeframe == 12)
     if industry_group is not None:
         query = query.find(Report.industry_group == industry_group)

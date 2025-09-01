@@ -1,15 +1,17 @@
 from typing import Any
+
 import requests
 from beanie.odm.queries.find import FindMany
 
 
 def normalize_field(field: str, data_max: dict[str, float]) -> dict:
-    """Returns a MongoDB expression to normalize a field between -1 and 1."""
+    """Return a MongoDB expression to normalize a numeric field by its max magnitude."""  # noqa: E501
 
     return {"$divide": [f"${field}", data_max[field]]}
 
 
 async def field_max(query: FindMany, fields: list[str]) -> dict[str, float]:
+    """Return max absolute values for given fields from the query (defaults to 1 for zeros)."""  # noqa: E501
     data_max = await query.aggregate(
         [
             {
@@ -30,6 +32,7 @@ async def field_max(query: FindMany, fields: list[str]) -> dict[str, float]:
 def debug_query(
     fields: dict[str, float], data_max: dict[str, float]
 ) -> list[dict]:
+    """Build a Mongo pipeline to expose normalization and weighted score steps for debugging."""  # noqa: E501
     return [
         {
             "$addFields": {
@@ -60,6 +63,7 @@ def debug_query(
 
 
 def mongo_unique_reports_pipeline():
+    """Deduplicate reports by name/date/timeframe keeping the most recent partition."""  # noqa: E501
     return [
         {"$sort": {"date": -1, "partition_key": -1}},
         {
@@ -77,10 +81,12 @@ def mongo_unique_reports_pipeline():
 
 
 def mongo_fiscal_year_field():
+    """Add derived fiscal year integer from Jalali date string (jdate)."""  # noqa: E501
     return {"$addFields": {"year": {"$toInt": {"$substr": ["$jdate", 0, 4]}}}}
 
 
 def mongo_total_revenue_by_year_pipeline():
+    """Aggregate total revenue per year across matched documents."""
     return [
         mongo_fiscal_year_field(),
         {"$match": {"revenue": {"$ne": None}}},
@@ -102,6 +108,7 @@ def mongo_total_revenue_by_year_pipeline():
 
 
 def mongo_field_groupby_pipeline(field: str, groupby_field: str):
+    """Aggregate yearly sums for a field grouped by another field (e.g., industry_group)."""  # noqa: E501
     return [
         mongo_fiscal_year_field(),
         {"$match": {field: {"$ne": None}}},
@@ -124,6 +131,7 @@ def mongo_field_groupby_pipeline(field: str, groupby_field: str):
 
 
 def mongo_total_field_by_year_pipeline(field: str):
+    """Aggregate total of a numeric field per year across matched documents."""  # noqa: E501
     return [
         mongo_fiscal_year_field(),
         {"$match": {field: {"$ne": None}}},
@@ -145,6 +153,7 @@ def mongo_total_field_by_year_pipeline(field: str):
 
 
 def dagster_fetch_assets(url):
+    """Query Dagster GraphQL API to fetch asset keys present in the graph."""  # noqa: E501
     query = """
     query {
         assetNodes {
@@ -162,12 +171,15 @@ def dagster_fetch_assets(url):
                 json={
                     "query": query,
                 },
-            ).json()["data"]["assetNodes"]
+            ).json()[
+                "data"
+            ]["assetNodes"]
         ]
     }
 
 
 def dagster_status_graphql(url, variables):
+    """Query Dagster GraphQL for live asset status given asset key variables."""  # noqa: E501
     query = """
     query AssetGraphLiveQuery($assetKeys: [AssetKeyInput!]!) {
     assetNodes(assetKeys: $assetKeys, loadMaterializations: true) {
@@ -250,6 +262,7 @@ def dagster_status_graphql(url, variables):
 
 
 def dagster_metadata_parser(input: list[dict[str, Any]]):
+    """Flatten Dagster metadata entries into a simple label->value dict."""  # noqa: E501
     result = {}
     for entry in input:
         if not entry:

@@ -12,6 +12,7 @@ from pydantic import (
 from codal.models import Prediction
 
 
+# API-level validation error with HTTP status code
 class FilterError(Exception):
     status_code: int
 
@@ -21,6 +22,7 @@ class FilterError(Exception):
         super().__init__(message)
 
 
+# Common pagination fields and helpers (offset/limit -> skip)
 class PaginatedMixin(BaseModel):
     offset: int | None = Field(None, ge=0, examples=[0])
     limit: int | None = Field(None, ge=0, examples=[10])
@@ -39,6 +41,7 @@ class PaginatedMixin(BaseModel):
         return self.limit * self.offset
 
 
+# Weights for scoring/ranking; non-null entries are included in score
 class Weights(BaseModel):
     current_ratio: float | None = None
     quick_ratio: float | None = None
@@ -72,6 +75,7 @@ class Weights(BaseModel):
     delta_price_to_delta_usd: float | None = None
 
 
+# Request model for filtering/sorting profiles and computing weighted scores
 class ProfileIn(PaginatedMixin):
     industry_group: int | None = None
     industry_only: bool | None = None
@@ -109,6 +113,7 @@ class ProfileIn(PaginatedMixin):
         return self
 
 
+# Response model for a profile row, extends Weights for convenience
 class ProfileOut(Weights):
     name: str
     is_industry: bool
@@ -119,22 +124,26 @@ class ProfileOut(Weights):
     date: datetime
 
 
+# ProfileOut with computed score field
 class RankOut(ProfileOut):
     score: float
 
 
+# Paged response for rankings
 class RankOutWithTotal(BaseModel):
     page: int
     total: int
     data: list[RankOut]
 
 
+# Paged response for predictions collection
 class PredictionOutWithTotal(BaseModel):
     page: int
     total: int
     data: list[Prediction]
 
 
+# Request model to fetch a specific report by name/timeframe
 class ReportIn(BaseModel):
     name: str
     timeframe: Literal[1, 2, 3]

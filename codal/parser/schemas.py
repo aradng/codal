@@ -5,6 +5,7 @@ from pandas import DataFrame
 from pydantic import BaseModel, field_validator
 
 
+# Point-in-time market/macro inputs aligned to a report date
 class PriceCollection(BaseModel):
     GDP: np.float64 = np.float64(np.nan)
     price_per_share: np.float64 = np.float64(np.nan)
@@ -28,6 +29,7 @@ class PriceCollection(BaseModel):
         arbitrary_types_allowed = True
 
 
+# Container of source DataFrames needed to compute PriceCollection
 class PriceDFs(BaseModel):
     TSETMC_STOCKS: DataFrame
     GDP: DataFrame
@@ -39,6 +41,7 @@ class PriceDFs(BaseModel):
         arbitrary_types_allowed = True
 
 
+# Normalized financial statement fields extracted from Codal tables
 class Report(BaseModel):
     net_profit: np.float64 = np.float64(np.nan)
     gross_profit: np.float64 = np.float64(np.nan)
@@ -80,10 +83,12 @@ class Report(BaseModel):
         arbitrary_types_allowed = True
 
 
+# Convenience union of Report and PriceCollection for ratio calculations
 class FullReport(Report, PriceCollection):  # type: ignore[misc]
     pass
 
 
+# Computed financial ratios used for profiling and ranking
 class Ratios(BaseModel):
     current_ratio: np.float64
     quick_ratio: np.float64

@@ -8,14 +8,17 @@ from dagster import (
 )
 
 start_date = datetime.datetime(2011, 3, 21)
+# Mapping of month lengths to human labels used in asset naming
 timeframes = {"3": "quarterly", "6": "semi-annually", "12": "annually"}
 
 timeframe_partition = StaticPartitionsDefinition(list(timeframes.keys()))
 
+# Weekly time window partitions for report fetching windows
 company_time_partition = WeeklyPartitionsDefinition(
     name="timewindow", start_date=start_date, end_offset=0
 )
 
+# Cross-partition across time window and report timeframe (3/6/12 months)
 company_multi_partition = MultiPartitionsDefinition(
     {
         "timewindow": company_time_partition,
@@ -23,6 +26,7 @@ company_multi_partition = MultiPartitionsDefinition(
     }
 )
 
+# Per-timeframe multi-partition with cron-aligned time windows for industry profiles # noqa: E501
 report_multi_partition = {
     timeframe: MultiPartitionsDefinition(
         {

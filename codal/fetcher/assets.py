@@ -41,6 +41,7 @@ from codal.fetcher.schemas import (
 from codal.fetcher.utils import APIError, sanitize_persian
 
 
+# Fetch latest industry list from Codal and persist as DataFrame
 @asset(
     retry_policy=RetryPolicy(
         max_retries=3,
@@ -64,6 +65,7 @@ def get_industries(
     return Output(df, metadata={"records": len(df)})
 
 
+# Fetch latest companies list from Codal and persist as DataFrame
 @asset(
     retry_policy=RetryPolicy(
         max_retries=3,
@@ -85,12 +87,14 @@ def get_companies(
     return Output(df, metadata={"records": len(df)})
 
 
+# Helper: build Codal report search URL for logging/metadata
 def get_url(params: BaseModel) -> str:
     base_url = "https://search.codal.ir/api/search/v2/q?"
     query_string = urlencode(params.model_dump(exclude_none=True), safe="")
     return urljoin(base_url, f"?{query_string}")
 
 
+# Fetch all report letters from Codal search API across pages
 def fetch_reports(params: CompanyReportOut) -> list[CompanyReportLetter]:
     listings: list[CompanyReportsIn] = []
     current_page = 1
@@ -114,6 +118,7 @@ def fetch_reports(params: CompanyReportOut) -> list[CompanyReportLetter]:
     return list(chain.from_iterable([listing.Letters for listing in listings]))
 
 
+# Concurrently fetch and store a single Codal report's tables to filestore
 async def fetch_report_data(
     context: AssetExecutionContext,
     report: CompanyReportLetter,
@@ -161,6 +166,7 @@ async def fetch_report_data(
     return file
 
 
+# For each (timeframe x weekly window) partition, pull new company reports and store    # noqa: E501
 @asset(
     retry_policy=RetryPolicy(
         max_retries=5,
@@ -244,6 +250,7 @@ async def fetch_company_reports(
     )
 
 
+# Fetch historical GDP (Iran) from API Ninjas and resample monthly end
 @asset(
     retry_policy=RetryPolicy(
         max_retries=3,
@@ -276,6 +283,7 @@ def fetch_gdp(
     )
 
 
+# Fetch BRENT crude history from AlphaVantage
 @asset(
     retry_policy=RetryPolicy(
         max_retries=3,
@@ -300,6 +308,7 @@ def fetch_commodity(
     )
 
 
+# Fetch USD/IRR history from TGJU
 @asset(
     retry_policy=RetryPolicy(
         max_retries=3,
@@ -322,6 +331,7 @@ def fetch_usd(tgju_api: TgjuAPIResource) -> Output[pd.DataFrame]:
     )
 
 
+# Fetch 18k gold price history (IRR) from TGJU
 @asset(
     retry_policy=RetryPolicy(
         max_retries=3,
@@ -344,6 +354,7 @@ def fetch_gold(tgju_api: TgjuAPIResource) -> Output[pd.DataFrame]:
     )
 
 
+# Resolve non-deleted companies listed on TSETMC and filter by allowed industries # noqa: E501
 @asset(
     retry_policy=RetryPolicy(
         max_retries=3,
@@ -373,7 +384,7 @@ async def fetch_tsetmc_filtered_companies(
             46: "تجارت عمده فروشی به جز وسایل نقلیه موتور",
             56: "سرمایه گذاریها",
             57: "بانکها و موسسات اعتباری",
-	    58: "سایر واسطه گر های مالی",
+            58: "سایر واسطه گر های مالی",
             66: "بیمه وصندوق بازنشستگی به جزتامین اجتماعی",
             67: "فعالیتهای کمکی به نهادهای مالی واسط",
             61: "حمل و نقل آبی",
@@ -401,6 +412,7 @@ async def fetch_tsetmc_filtered_companies(
     )
 
 
+# Download daily close series for all filtered companies from TSETMC
 @asset(
     retry_policy=RetryPolicy(
         max_retries=3,
@@ -445,7 +457,7 @@ def company_report_summary(
     fetch_company_reports: dict[str, pd.DataFrame],
 ) -> Output[pd.DataFrame]:
     """
-    Generate a summary of reports, including an image visualization.
+    Summarize number of fetched reports and errors over time and save a plot.
     """
 
     df = pd.concat(fetch_company_reports.values())

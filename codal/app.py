@@ -16,6 +16,9 @@ models = [Company, Industry, Profile, Report, Prediction]
 
 
 async def lifespan(app: FastAPI):
+    """Initialize Mongo connection and
+    Beanie ODM models for the app lifecycle.
+    """
     client: AgnosticClient = AsyncIOMotorClient(
         settings.MONGO_URI, tz_aware=True
     )
@@ -49,4 +52,5 @@ app.include_router(router=chart_router, prefix="/api/codal/charts")
 async def exception_handler(
     request: Request, exc: FilterError
 ) -> HTTPException:
+    """Transform custom FilterError into an HTTPException for FastAPI."""
     raise HTTPException(status_code=exc.status_code, detail=exc.message)

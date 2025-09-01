@@ -39,7 +39,7 @@ table_names_map = {
     },
 }
 
-
+# before 98
 table_names_map_b98 = {
     "صورت سود و زیان": {
         "سود (زیان) خالص": "net_profit",

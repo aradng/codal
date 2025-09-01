@@ -2,6 +2,7 @@ from pydantic import computed_field
 from pydantic_settings import BaseSettings
 
 
+# Application settings loaded from environment (pydantic-settings)
 class Settings(BaseSettings):
     MONGO_USERNAME: str
     MONGO_PASSWORD: str
@@ -18,4 +19,4 @@ class Settings(BaseSettings):
         )
 
 
-settings = Settings()
+settings = Settings()  # type: ignore[call-arg]

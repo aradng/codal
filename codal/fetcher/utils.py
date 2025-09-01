@@ -4,11 +4,13 @@ import numpy as np
 from dagster import get_dagster_logger
 
 
+# Normalize Persian numerals/characters and trim whitespace
 def sanitize_persian(input: str) -> str:
     trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹يك", "0123456789یک")
     return input.translate(trans).strip()
 
 
+# Raised for handled API fetch errors with an HTTP status code
 class APIError(Exception):
     status_code: int
 
@@ -18,6 +20,7 @@ class APIError(Exception):
         super().__init__(message)
 
 
+# Replace Excel-style cell references (A1, B3) with numeric values
 def replace_cell_references(formula, values):
     """
     Replaces all cell references (e.g., A21, B3)
@@ -39,6 +42,7 @@ def replace_cell_references(formula, values):
     return re.sub(pattern, replace_match, formula)
 
 
+# Expand Excel-style ranges (A1:A10) into tuples of values for evaluation
 def replace_ranges(formula, values):
     """
     Replaces Excel-style ranges (e.g., A21:A44)
@@ -76,6 +80,7 @@ def replace_ranges(formula, values):
     return re.sub(pattern, replace_match, formula)
 
 
+# Safe float check for mixed types in parsed tables
 def is_float(value):
     try:
         float(value)
@@ -84,6 +89,7 @@ def is_float(value):
         return False
 
 
+# Evaluate a minimal subset of Excel formulas using Python with helpers
 def eval_formula(formula: str, address: str, values: dict[str, float] = {}):
     formula = formula.replace("=", "")
     logger = get_dagster_logger()
